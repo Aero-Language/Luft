@@ -2,7 +2,7 @@
 using System.Collections.Generic;
 using System.Text.RegularExpressions;
 
-namespace Aero_Compiler.Lexer;
+namespace Luft.Lexer;
 
 internal static class TokenMatcher
 {
@@ -68,6 +68,12 @@ internal static class TokenMatcher
             ] 
         },
 
+        // Annotation prefix
+        {
+            TokenType.Annotation,
+            [ new Regex(@"\G[@]", RegexOptions.Compiled) ]
+        },
+        
         // Punctuation & Delimiters
         { 
             TokenType.Punctuation, 
@@ -99,40 +105,36 @@ internal static class TokenMatcher
     // Cached once at startup; sorted by the numeric values assigned in TokenType enum
     private static readonly TokenType[] Types = Enum.GetValues<TokenType>();
 
-    public static bool TryMatch(string text, int startIndex, SourceSpan currentSpan, out Token token, out int length)
+    public static bool TryMatch(string text, int startIndex, out TokenType matchedType, out string matchedValue, out int length)
     {
-        token = new Token(TokenType.Unknown, "", SourceSpan.Unknown);
+        // Set default values
+        matchedType = TokenType.Unknown;
+        matchedValue = string.Empty;
         length = 0;
-        
-        // Go through all possible TokenTypes in numeric order
+
+        // Go through all of the TokenTypes
         foreach (var type in Types)
         {
-            if (!TokenRegexes.TryGetValue(type, out var regexes)) 
+            if (!TokenRegexes.TryGetValue(type, out var regexes))
                 continue;
 
-            // Try each regex for the current TokenType
+            // Go Through all regexes for type
             foreach (var regex in regexes)
             {
                 var match = regex.Match(text, startIndex);
-                if (!match.Success) 
+                if (!match.Success)
                     continue;
-                
-                // Reclassify identifiers as keywords if they match the reserved word set
-                var actualType = type;
-                if (type == TokenType.Identifier && Keywords.Contains(match.Value))
-                {
-                    actualType = TokenType.Keyword;
-                }
-                
-                var endLocation = currentSpan.Start with { Column = currentSpan.Start.Column + match.Length };
-                var tokenSpan = currentSpan with { End = endLocation };
 
-                token = new Token(actualType, match.Value, tokenSpan);
+                matchedType = type;
+                if (type == TokenType.Identifier && Keywords.Contains(match.Value))
+                    matchedType = TokenType.Keyword;
+
+                matchedValue = match.Value;
                 length = match.Length;
                 return true;
             }
         }
-        
+
         return false;
     }
 }

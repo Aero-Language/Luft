@@ -1,4 +1,4 @@
-﻿namespace Aero_Compiler;
+﻿namespace Luft;
 
 public record SourceSpan(string FilePath, TextLocation Start, TextLocation End)
 {

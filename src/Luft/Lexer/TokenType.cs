@@ -1,6 +1,6 @@
-﻿namespace Aero_Compiler.Lexer;
+﻿namespace Luft.Lexer;
 
-internal enum TokenType
+public enum TokenType
 {
     // Priority 10–20: Whitespace & Comments (evaluated first)
     Whitespace   = 10,
@@ -14,6 +14,7 @@ internal enum TokenType
 
     // Priority 70–90: Identifiers, Operators, & Punctuation
     Identifier   = 70, // Promoted to Keyword if present in the Keywords lookup table
+    Annotation   = 75, 
     Operator     = 80,
     Punctuation  = 90,
 

@@ -1,3 +1,3 @@
-﻿namespace Aero_Compiler.Lexer;
+﻿namespace Luft.Lexer;
 
-internal record Token(TokenType Type, string Value, SourceSpan Span);
+public record Token(TokenType Type, string Value, SourceSpan Span);

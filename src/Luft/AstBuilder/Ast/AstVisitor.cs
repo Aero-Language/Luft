@@ -8,6 +8,14 @@ internal abstract class AstVisitor<T>
         
         // DeclarationNodes
         FunctionDeclarationNode n => VisitFunction(n),
+        ExtensionDeclarationNode n => VisitExtension(n),
+        StructDeclarationNode n => VisitStruct(n),
+        ClassDeclarationNode n => VisitClass(n),
+        InterfaceDeclarationNode n => VisitInterface(n),
+        PropertyDeclarationNode n => VisitProperty(n),
+        ConstructorDeclarationNode n => VisitConstructor(n),
+        DestructorDeclarationNode n => VisitDestructor(n),
+        
         
         // StatementNodes
         BlockStatementNode n => VisitBlock(n),
@@ -26,6 +34,13 @@ internal abstract class AstVisitor<T>
 
     // DeclarationNodes
     protected virtual T VisitFunction(FunctionDeclarationNode node) => Default(node);
+    protected virtual T VisitExtension(ExtensionDeclarationNode node) => Default(node);
+    protected virtual T VisitStruct(StructDeclarationNode node) => Default(node);
+    protected virtual T VisitClass(ClassDeclarationNode node) => Default(node);
+    protected virtual T VisitInterface(InterfaceDeclarationNode node) => Default(node);
+    protected virtual T VisitProperty(PropertyDeclarationNode node) => Default(node);
+    protected virtual T VisitConstructor(ConstructorDeclarationNode node) => Default(node);
+    protected virtual T VisitDestructor(DestructorDeclarationNode node) => Default(node);
 
     // StatementNodes
     protected virtual T VisitBlock(BlockStatementNode node) => Default(node);

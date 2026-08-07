@@ -21,16 +21,4 @@ public class Builder
         
         return string.Empty;
     }
-    
-    public async Task<string> BuildAsync(string[] files)
-    {
-        foreach (string file in files)
-        {
-            var lexer = new Lexer.Lexer();
-            
-            var tokens = lexer.Tokenize(file);
-        }
-        
-        return string.Empty;
-    }
 }

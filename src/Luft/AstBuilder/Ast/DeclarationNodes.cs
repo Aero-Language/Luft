@@ -1,4 +1,6 @@
-﻿namespace Luft.AstBuilder.Ast;
+﻿using System.Diagnostics.CodeAnalysis;
+
+namespace Luft.AstBuilder.Ast;
 
 internal record FunctionDeclarationNode
 (
@@ -10,6 +12,13 @@ internal record FunctionDeclarationNode
     ValueList<TypeRef>? GenericParameters,
     ValueList<ParamNode> Parameters,
     BlockStatementNode? Body,
+    SourceSpan Span
+) : DeclarationNode(Span);
+
+internal record ExtensionDeclarationNode
+(
+    FunctionDeclarationNode? Function,
+    PropertyDeclarationNode? Property,
     SourceSpan Span
 ) : DeclarationNode(Span);
 
@@ -65,6 +74,13 @@ internal record ConstructorDeclarationNode
     ValueList<AnnotationExpressionNode> Annotations,
     AccessMod AccessMod,
     ValueList<ParamNode> Parameters,
+    BlockStatementNode Body,
+    SourceSpan Span
+) : DeclarationNode(Span);
+
+internal record DestructorDeclarationNode
+(
+    ValueList<AnnotationExpressionNode> Annotations,
     BlockStatementNode Body,
     SourceSpan Span
 ) : DeclarationNode(Span);

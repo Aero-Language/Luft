@@ -6,7 +6,7 @@ internal abstract record DeclarationNode(SourceSpan Span) : AstNode(Span);
 internal abstract record StatementNode(SourceSpan Span) : AstNode(Span);
 internal abstract record ExpressionNode(TypeRef NodeType, SourceSpan Span) : AstNode(Span);
 
-internal record ProgramNode(DeclarationNode[] Declarations, SourceSpan Span) : AstNode(Span);
+internal record FileNode(ModuleDeclarationNode[] Modules, ImportStatementNode[] Imports, SourceSpan Span) : AstNode(Span);
 internal record GenericParamNode(string Name, ValueList<TypeRef> Constraints, SourceSpan Span) : AstNode(Span);
 internal record PropertyAccessorNode
 (

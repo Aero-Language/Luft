@@ -1,0 +1,154 @@
+/*
+    Aero Programming Language - Comprehensive Test Suite
+    Tests: Modules, Imports/Exports, Lexer Tokens, OOP (Classes, Structs, Traits), 
+           Control Flow, Generics, and Advanced Type References.
+*/
+
+import Core.System
+from Core.Math import Sqrt, Power 
+
+module AeroTests.ComprehensiveTest {
+    public enum GameState { // A collection of CONSTANT values with a name and type
+        Menu,
+        Playing,
+        Paused,
+        GameOver
+    }
+    
+    public enum class PlayerNames: String { // Basically a collection of static val's, NOT constants, unchangeable, but not constant
+        Steve = "steve",
+        Kevin = "kevin15"
+    }
+
+    public trait ISerializable { // A trait is basically an Interface
+        fun Serialize() -> String // Types are PascalCase
+    }
+
+    public trait IUpdatable {
+        fun Update(deltaTime: Float) -> Void
+    }
+
+    public struct Vector3 : ISerializable {
+        var X: Float // Properties in structs are public by default
+        var Y: Float
+        var Z: Float
+
+        public impl Serialize() -> String {
+            return $"\{ X: {X}|Y: {Y}|Z: {Z} \}" // Backslash can always escape chars
+        }
+    }
+
+    internal static Int AsState() -> GameState {
+        return GameState[self] // Self here is the Int instance that the extension was called on | enums can be indexed and are of type int by default
+    }
+    
+    internal fun DoSomething(something: () => Void){ // '() => ...' are lambda functions that can be executed and return a value
+        something()
+    }
+
+    public class Entity : IUpdatable {
+        // Property testing (Getter/Setter Nodes)
+        // This uses a hidden backing property so that self = value does not invoke the setter
+        Int Id {
+            get { self } // This can have an optional return statement but blocks dont need to have return, it can be inferred by being the last expression in a block
+            // Getter/Setter can also use 'get => someValue' instead of 'get { somevalue }'
+            set { self = value }
+        }
+
+        // Virtual method for overriding (InheritanceMod test)
+        virtual fun Update(deltaTime: Float) -> Void { // '-> Void' is not neccesary here, it can be inferred / is the default returnType 
+            DoSomething { // if the last parameter of a function is a lambda, it can be directly accessed
+                /* Update logic */ 
+            } 
+        }
+    }
+
+    // Class inheritance (1 base class + N traits)
+    public class Player : Entity, ISerializable {
+        // Variable Declaration Nodes (const, let, var)
+        const MAX_HEALTH = 100 // Type can be inferred here, so ': Int' is not needed, but can be added or ': Float' would automatically infer the Int as a Float
+        private var health: Int // anything private is camelCase
+        private var name: String
+        
+        // Advanced TypeRef tests: Generics, Nullables (?), Arrays ([])
+        private var inventory: List<String?>
+        private var pathMatrix: Int[][]
+
+        // Override method
+        public impl fun Update(float deltaTime) { // As explained before, the default return type for functions is Void, so it not necessary to add
+            health += 1
+        }
+
+        public impl fun Serialize() -> String
+            => name // Functions can also use a singleExpression instead of a block
+    }
+
+    // Testing Concurrency, Generics, and Ref parameters
+    public fun FetchPlayerData<T>(ref playerId: Int) -> T? { // Ref is used to pass structs like classes where an instance is passed instead of a value
+        val result: T?
+        
+        concurrent {
+            result = spawn { Core.System.NetworkRequest(playerId) } // Spawn 
+        } // Execution stops here 
+        
+        return result
+    }
+
+    public fun main(args: String[]) -> Int {
+        // Literals testing (Int, Float, Hex, Bin, Boolean, Null, Char, String)
+        val decLiteral: Int = 42
+        val hexLiteral: Int = 0xFF
+        val binLiteral: Int = 0b1010
+        val floatVal: Float = 3.14159
+        val isRunning: Bool = true
+        val charVal: Char = 'A'
+        val emptyRef: Player = null // Compiler error since 'Player' is not a nullable type 
+
+        var currentHealth = Player.MAX_HEALTH;
+        var state = GameState.Playing;
+
+        // If / Else Statement Node
+        if (currentHealth > 50) {
+            currentHealth -= 10
+        } else if (currentHealth == 50) {
+            currentHealth = 0
+        } else {
+            return -1
+        }
+
+        // While Statement Node
+        while isRunning {
+            if currentHealth <= 0 {
+                isRunning = false; break // Semicolons can be used to separate two statements in a single line
+            }
+            currentHealth -= 1
+        }
+
+        // For-In Statement Node (Iteration over collections)
+        val numbers: Int[] = [1, 2, 3, 4, 5];
+        for (n in numbers) {
+            if (n % 2 == 0) {
+                continue // Breaks out of the current iteration and keeps going with the next item if there are any
+            }
+            currentHealth += n
+        }
+        for (i: Int; i < 5; i++) { // Standard C style loop
+            Core.System.Print(i)
+        }
+
+        // Match Statement Node
+        match state {
+            GameState.Menu => currentHealth = 100,
+            GameState.Playing => {
+                currentHealth -= 1
+                state = 2.AsState() // Extensions can also be used on literals
+            },
+            _ => ;; // '_ => ...' is the default case | ';;' is an empty statement
+        }
+
+        // Expression Statement Node (Side-effects, Operators)
+        currentHealth += (Int)((decLiteral * binLiteral) / 2) // Casting / Scoping, grouping expressions with (x+y) ensures that they executed in wanted order as grouped expressions will be executed first inside and then the outside
+
+        return 0 // Return Statement Node
+    }
+}

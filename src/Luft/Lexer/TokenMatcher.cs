@@ -1,5 +1,6 @@
 ﻿using System;
 using System.Collections.Generic;
+using System.Diagnostics;
 using System.Text.RegularExpressions;
 
 namespace Luft.Lexer;
@@ -12,10 +13,22 @@ internal static class TokenMatcher
     /// </summary>
     public static readonly HashSet<string> Keywords = new(StringComparer.Ordinal)
     {
-        "let", "var", "const", "fn", "func", "return", "if", "else",
-        "while", "for", "in", "break", "continue", "struct", "class",
-        "enum", "import", "export", "pub", "private", "true", "false",
-        "null", "async", "await", "match", "type", "trait", "impl"
+        // Core variables & functions
+        "val", "var", "const", "fun", "return",
+        // Control flow
+        "if", "else", "while", "for", "in", "break", "continue", "match",
+        // Object-oriented & Types
+        "struct", "record", "class", "enum", "trait", "extension",
+        // Access modifiers & State
+        "public", "private", "protected", "static", "weak",
+        // Memory & Lifecycles
+        "ref",
+        // Concurrency
+        "concurrent", "spawn",
+        // Modules
+        "module", "import", "from",
+        // Values & Properties
+        "true", "false", "null", "self", "get", "set"
     };
 
     /// <summary>
@@ -68,16 +81,16 @@ internal static class TokenMatcher
             ] 
         },
 
-        // Annotation prefix
+        // Annotation prefix (@)
         {
             TokenType.Annotation,
             [ new Regex(@"\G[@]", RegexOptions.Compiled) ]
         },
         
-        // Punctuation & Delimiters
+        // Punctuation & Delimiters (Includes ;; for the explicit NOP empty statement)
         { 
             TokenType.Punctuation, 
-            [ new Regex(@"\G[\(\)\{\}\[\],;\.:]", RegexOptions.Compiled) ] 
+            [ new Regex(@"\G;;|\G[\(\)\{\}\[\],;\.:]", RegexOptions.Compiled) ] 
         },
 
         // Comments (Single-line // and Multi-line /* ... */)
@@ -112,7 +125,7 @@ internal static class TokenMatcher
         matchedValue = string.Empty;
         length = 0;
 
-        // Go through all of the TokenTypes
+        // Go through all of the TokenTypes in strictly defined priority order
         foreach (var type in Types)
         {
             if (!TokenRegexes.TryGetValue(type, out var regexes))
@@ -126,6 +139,8 @@ internal static class TokenMatcher
                     continue;
 
                 matchedType = type;
+                
+                // Fast O(1) keyword classification
                 if (type == TokenType.Identifier && Keywords.Contains(match.Value))
                     matchedType = TokenType.Keyword;
 

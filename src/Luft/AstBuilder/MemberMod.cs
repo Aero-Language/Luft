@@ -3,8 +3,9 @@
 [Flags]
 public enum MemberMod
 {
-    None = 0,
+    None,
     Static,
     Abstract,
-    Sealed
+    Sealed,
+    Weak
 }

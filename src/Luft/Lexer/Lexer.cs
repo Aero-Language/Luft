@@ -4,9 +4,9 @@ using System.Linq;
 
 namespace Luft.Lexer;
 
-public class Lexer
+internal static class Lexer
 {
-    public Token[] Tokenize(string filePath)
+    internal static Token[] Tokenize(string filePath)
     {
         if (!File.Exists(filePath)) 
             throw new FileNotFoundException(filePath);

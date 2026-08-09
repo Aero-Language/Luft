@@ -1,4 +1,5 @@
 ﻿using Luft;
+using Luft.AstBuilder.Ast;
 
 namespace LuftCli;
 
@@ -6,7 +7,7 @@ public static class Program
 {
     static void Main()
     {
-        string[] args = [ "build", @"C:\Users\HolzkaemperFabio\Desktop\test.aero" ];
+        string[] args = [ "build", "test.aero" ];
         
         if (args.Length <= 0)
         {

@@ -1,28 +1,34 @@
-﻿namespace Luft.AstBuilder;
+﻿using Luft.AstBuilder.Ast;
+
+namespace Luft.AstBuilder;
 
 
-internal record TypeRef(string Name, bool IsRef, bool IsNullable, TypeRef? ElementType = null, ValueList<TypeRef>? TypeArguments = null)
+internal record TypeRef(string Name, bool IsRef, bool IsNullable, bool IsAutoVar = false, TypeRef? ElementType = null, ExpressionNode? ArraySize = null, ValueList<TypeRef>? TypeArguments = null, bool IsError = false)
 {
     public bool IsArray => ElementType is not null;
     public bool IsGeneric => TypeArguments is { Count: > 0 };
     
     /// <summary>
-    /// Gets the core scalar type name unwrapping all array dimensions.
-    /// e.g., "int[][]" returns "int".
+    /// Gets the core scalar type unwrapping all array dimensions.
+    /// e.g., "Int[][]" returns "Int".
     /// </summary>
-    public string BaseName => ElementType?.BaseName ?? Name;
+    public TypeRef BaseElement => ElementType?.BaseElement ?? this;
     
     /// <summary>
     /// Calculates the array nesting depth.
-    /// e.g., "int" = 0, "int[]" = 1, "int[][]" = 2.
+    /// e.g., "Int" = 0, "Int[]" = 1, "Int[][]" = 2.
     /// </summary>
     public int ArrayRank => ElementType is null ? 0 : 1 + ElementType.ArrayRank;
     
     
     public override string ToString()
     {
-        if (IsArray) 
-            return $"{ElementType}[]";
+        if (IsArray)
+        {
+            var sizeStr = ArraySize != null ? ArraySize.ToString() : "";
+            var nullStr = IsNullable ? "?" : "";
+            return $"{ElementType}[{sizeStr}]{nullStr}";
+        }
         
         var baseStr = Name;
         if (IsGeneric) 
@@ -36,4 +42,7 @@ internal record TypeRef(string Name, bool IsRef, bool IsNullable, TypeRef? Eleme
         
         return baseStr;
     }
+
+    public static readonly TypeRef AutoVar = new TypeRef("", false, false, true);
+    public static readonly TypeRef Error = new TypeRef("", false, false, IsError: true);
 }

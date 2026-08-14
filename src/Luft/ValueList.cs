@@ -9,6 +9,9 @@ namespace Luft;
 /// <typeparam name="T">The type of items the list contains</typeparam>
 public class ValueList<T>(IEnumerable<T> items) : IReadOnlyList<T>
 {
+    public ValueList() : this(Enumerable.Empty<T>()) {}
+    
+
     public T this[int index] => items.ElementAt(index);
     
     public IEnumerator GetEnumerator() => items.GetEnumerator();

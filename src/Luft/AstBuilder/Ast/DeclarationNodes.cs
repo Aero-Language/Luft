@@ -2,7 +2,7 @@
 
 internal record FunctionDeclarationNode
 (
-    ValueList<AnnotationStatementNode> Annotations,
+    ValueList<AnnotationNode> Annotations,
     AccessMod AccessMod,
     MemberMod MemberMods,
     TypeRef ReturnType,
@@ -30,7 +30,7 @@ internal record ExtensionBlockDeclarationNode
 
 internal record StructDeclarationNode
 (
-    ValueList<AnnotationStatementNode> Annotations,
+    ValueList<AnnotationNode> Annotations,
     AccessMod AccessMod,
     MemberMod MemberMods,
     string Name,
@@ -42,7 +42,7 @@ internal record StructDeclarationNode
 
 internal record AnnotationDeclarationNode
 (
-    ValueList<AnnotationStatementNode> Annotations,
+    ValueList<AnnotationNode> Annotations,
     AccessMod AccessMod,
     MemberMod MemberMods,
     string Name,
@@ -54,7 +54,7 @@ internal record AnnotationDeclarationNode
 
 internal record RecordDeclarationNode
 (
-    ValueList<AnnotationStatementNode> Annotations,
+    ValueList<AnnotationNode> Annotations,
     AccessMod AccessMod,
     MemberMod MemberMods,
     string Name,
@@ -65,7 +65,7 @@ internal record RecordDeclarationNode
 
 internal record ClassDeclarationNode
 (
-    ValueList<AnnotationStatementNode> Annotations,
+    ValueList<AnnotationNode> Annotations,
     AccessMod AccessMod,
     MemberMod MemberMods,
     string Name,
@@ -78,10 +78,10 @@ internal record ClassDeclarationNode
 
 internal record TraitDeclarationNode
 (
-    ValueList<AnnotationStatementNode> Annotations,
+    ValueList<AnnotationNode> Annotations,
     AccessMod AccessMod,
     string Name,
-    ValueList<TypeRef>? GenericParameters,
+    ValueList<GenericParamNode> GenericParameters,
     ValueList<DeclarationNode> Declarations,
     ValueList<TypeRef> Traits,
     SourceSpan Span
@@ -89,7 +89,7 @@ internal record TraitDeclarationNode
 
 internal record EnumMemberNode
 (
-    ValueList<AnnotationStatementNode> Annotations,
+    ValueList<AnnotationNode> Annotations,
     string Name,
     ExpressionNode? Value, // Handles the '= "steve"' or '= 1' part
     SourceSpan Span
@@ -98,7 +98,7 @@ internal record EnumMemberNode
 // Represents the enum or enum class declaration itself
 internal record EnumDeclarationNode
 (
-    ValueList<AnnotationStatementNode> Annotations,
+    ValueList<AnnotationNode> Annotations,
     AccessMod AccessMod,
     bool IsEnumClass, // true for 'enum class', false for standard 'enum'
     string Name,
@@ -109,7 +109,7 @@ internal record EnumDeclarationNode
 
 internal record PropertyDeclarationNode
 (
-    ValueList<AnnotationStatementNode> Annotations,
+    ValueList<AnnotationNode> Annotations,
     AccessMod AccessMod,
     DeclarationKind DeclKind,
     TypeRef Type,
@@ -121,7 +121,7 @@ internal record PropertyDeclarationNode
 
 internal record ConstructorDeclarationNode
 (
-    ValueList<AnnotationStatementNode> Annotations,
+    ValueList<AnnotationNode> Annotations,
     AccessMod AccessMod,
     ValueList<ParamNode> Parameters,
     BlockStatementNode Body,
@@ -130,7 +130,7 @@ internal record ConstructorDeclarationNode
 
 internal record DestructorDeclarationNode
 (
-    ValueList<AnnotationStatementNode> Annotations,
+    ValueList<AnnotationNode> Annotations,
     BlockStatementNode Body,
     SourceSpan Span
 ) : DeclarationNode(Span);
@@ -138,6 +138,6 @@ internal record DestructorDeclarationNode
 internal record ModuleDeclarationNode
 (
     string ModulePath,
-    ValueList<DeclarationNode> Declarations, 
+    DeclarationNode[] Declarations, 
     SourceSpan Span
 ) : DeclarationNode(Span);

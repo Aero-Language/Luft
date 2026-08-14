@@ -2,24 +2,114 @@
 
 public enum TokenType
 {
-    // Priority 10–20: Whitespace & Comments (evaluated first)
-    Whitespace   = 10,
-    Comment      = 20,
+    // Whitespace & Comments (evaluated first)
+    Whitespace,
+    Comment,
 
-    // Priority 30–60: Literals (FloatLiteral MUST have a lower value than IntLiteral)
-    FloatLiteral = 30, // Tested BEFORE IntLiteral (e.g., matches "3.14" instead of stopping at "3")
-    IntLiteral   = 40,
-    StringLiteral= 50,
-    CharLiteral  = 60,
+    // Literals (FloatLiteral MUST have a lower value than IntLiteral)
+    FloatLiteral,           // Tested BEFORE IntLiteral (e.g., matches "3.14" instead of stopping at "3")
+    IntLiteral,
+    StringLiteral,
+    CharLiteral,
+    BooleanLiteral,
+    NullLiteral,
+    SelfLiteral,
 
-    // Priority 70–90: Identifiers, Operators, & Punctuation
-    Identifier   = 70, // Promoted to Keyword if present in the Keywords lookup table
-    Annotation   = 75, 
-    Operator     = 80,
-    Punctuation  = 90,
+    // Identifiers
+    Identifier, 
+    
+    // Keywords
+    // Grouped keywords
+    VariableKind,           // val, var, const
+    AccessModifierKind,     // public, internal, protected, private
+    InstanceKind,           // struct, record, class, enum, trait, extension, annotation
+    
+    
+    // Control-flow
+    IfKeyword,
+    ElseKeyword,
+    MatchKeyword,
+    CaseKeyword,
+    WhileKeyword,
+    ForKeyword,
+    InKeyword,
+    BreakKeyword,
+    ContinueKeyword,
+    
+    // Modules
+    ModuleKeyword,
+    ImportKeyword,
+    FromKeyword,
+    
+    // Standalone keywords
+    FunctionKeyword,
+    ReturnKeyword,
+    RefKeyword,
+    ConcurrentKeyword,
+    SpawnKeyword,
+    GetKeyword,
+    SetKeyword,
+    
+    // Operators
+    LeftShiftAssign,
+    RightShiftAssign,
+    Equality,
+    Inequality,
+    LessThanEqual,
+    GreaterThanEqual,
+    LogicalAnd,
+    LogicalOr,
+    Increment,
+    Decrement,
+    AddAssign,
+    SubtractAssign,
+    MultiplyAssign,
+    DivideAssign,
+    ModuloAssign,
+    AndAssign,
+    OrAssign,
+    XORAssign,
+    
+    ArrowSymbol,
+    SingleBlockSymbol,
+    RangeSymbol,
+    
+    LeftShift,
+    RightShift,
+    Add,
+    Subtract,
+    Multiply,
+    Divide,
+    Modulo,
+    Assign,
+    LessThan,
+    GreaterThan,
+    Not,
+    BitwiseAnd,
+    BitwiseOr,
+    BitwiseXor,
+    Tilde,
+    Nullability,
+    At,
+    CastSymbol,
+    
+    // Punctuation
+    EmptyStatement,
+    ParenthesisOpen,
+    ParenthesisClose,
+    BracketOpen,
+    BracketClose,
+    SquareOpen,
+    SquareClose,
+    Comma,
+    Semicolon,
+    Dot,
+    Colon,
+    InterpolationStart,
 
-    // Priority 100+: Special markers & Fallbacks
-    Eof          = 100,
-    Keyword      = 900, // Not matched directly by Regex (handled via Keyword table lookup)
-    Unknown      = 999  // Fallback token type
+    // Special markers & Fallbacks
+    InterpolationEnd,       // End of an interpolated string
+    Backslash,              // '\'
+    Eof,
+    Unknown                 // Fallback token type
 }

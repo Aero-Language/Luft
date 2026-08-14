@@ -25,7 +25,7 @@ internal abstract class AstVisitor<T>
         
         // StatementNodes
         BlockStatementNode n => VisitBlock(n),
-        AnnotationStatementNode n => VisitAnnotation(n),
+        AnnotationNode n => VisitAnnotation(n),
         VariableStatementNode n => VisitVariable(n),
         ReturnStatementNode n => VisitReturn(n),
         BreakStatementNode n => VisitBreak(n),
@@ -78,7 +78,7 @@ internal abstract class AstVisitor<T>
 
     // StatementNodes
     protected virtual T VisitBlock(BlockStatementNode node) => Default(node);
-    protected virtual T VisitAnnotation(AnnotationStatementNode node) => Default(node);
+    protected virtual T VisitAnnotation(AnnotationNode node) => Default(node);
     protected virtual T VisitVariable(VariableStatementNode node) => Default(node);
     protected virtual T VisitReturn(ReturnStatementNode node) => Default(node);
     protected virtual T VisitBreak(BreakStatementNode node) => Default(node);

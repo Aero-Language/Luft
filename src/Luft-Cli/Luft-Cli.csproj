@@ -13,4 +13,8 @@
       <ProjectReference Include="..\Luft\Luft.csproj" />
     </ItemGroup>
 
+    <ItemGroup>
+      <Content Include="test.aero" CopyToOutputDirectory="PreserveNewest"/>
+    </ItemGroup>
+
 </Project>

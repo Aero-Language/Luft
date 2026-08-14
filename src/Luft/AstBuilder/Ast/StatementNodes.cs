@@ -6,16 +6,9 @@ internal record BlockStatementNode
     SourceSpan Span
 ) : StatementNode(Span);
 
-internal record AnnotationStatementNode
-(
-    string Name,
-    ValueList<ParamNode> Parameters,
-    SourceSpan Span
-) : StatementNode(Span);
-
 internal record VariableStatementNode
 (
-    ValueList<AnnotationStatementNode> Annotations,
+    ValueList<AnnotationNode> Annotations,
     DeclarationKind DeclKind,
     TypeRef Type,
     string Name,
@@ -54,7 +47,7 @@ internal record ExpressionStatementNode
 
 internal record ImportStatementNode
 (
-    string ModulePath,
+    string TargetPath,
     ValueList<string>? Imports, // Null here means importing everything from the module
     SourceSpan Span
 ) : StatementNode(Span);

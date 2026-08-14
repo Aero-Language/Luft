@@ -75,7 +75,7 @@ module AeroTests.ComprehensiveTest {
         private var pathMatrix: Int[][]
 
         // Override method
-        public impl fun Update(float deltaTime) { // As explained before, the default return type for functions is Void, so it not necessary to add
+        public impl fun Update(deltaTime: Float) { // As explained before, the default return type for functions is Void, so it not necessary to add
             health += 1
         }
 
@@ -147,7 +147,7 @@ module AeroTests.ComprehensiveTest {
         }
 
         // Expression Statement Node (Side-effects, Operators)
-        currentHealth += (Int)((decLiteral * binLiteral) / 2) // Casting / Scoping, grouping expressions with (x+y) ensures that they executed in wanted order as grouped expressions will be executed first inside and then the outside
+        currentHealth += Int::((decLiteral * binLiteral) / 2) // Casting | grouping expressions with (x+y) ensures that they executed in wanted order
 
         return 0 // Return Statement Node
     }

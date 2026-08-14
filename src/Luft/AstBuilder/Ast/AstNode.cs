@@ -8,9 +8,17 @@ internal abstract record ExpressionNode(TypeRef NodeType, SourceSpan Span) : Ast
 
 internal record FileNode(ModuleDeclarationNode[] Modules, ImportStatementNode[] Imports, SourceSpan Span) : AstNode(Span);
 internal record GenericParamNode(string Name, ValueList<TypeRef> Constraints, SourceSpan Span) : AstNode(Span);
+
 internal record PropertyAccessorNode
 (
     AccessMod AccessMod,          // e.g., public get, private set
     BlockStatementNode? Body,     // Null for auto-props / interface props
+    SourceSpan Span
+) : AstNode(Span);
+
+internal record AnnotationNode
+(
+    string Name,
+    ValueList<ExpressionNode> Parameters,
     SourceSpan Span
 ) : AstNode(Span);

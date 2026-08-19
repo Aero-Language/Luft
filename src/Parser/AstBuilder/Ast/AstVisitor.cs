@@ -1,6 +1,6 @@
-﻿namespace Luft.AstBuilder.Ast;
+﻿namespace Luft.Parser.AstBuilder.Ast;
 
-internal abstract class AstVisitor<T>
+public abstract class AstVisitor<T>
 {
     public T Visit(AstNode node) => node switch
     {

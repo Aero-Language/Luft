@@ -1,7 +1,9 @@
 ﻿Microsoft Visual Studio Solution File, Format Version 12.00
-Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Luft", "src\Luft\Luft.csproj", "{660DEE80-AF17-409F-8C37-95621D45953F}"
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Parser", "src\Parser\Parser.csproj", "{660DEE80-AF17-409F-8C37-95621D45953F}"
 EndProject
-Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Luft-Cli", "src\Luft-Cli\Luft-Cli.csproj", "{C422F683-B165-4C41-A1FE-C1BC64A24DA3}"
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Cli", "src\Cli\Cli.csproj", "{C422F683-B165-4C41-A1FE-C1BC64A24DA3}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Builder", "Builder\Builder.csproj", "{C7DEE7B2-57A3-4610-A7D3-58872A312580}"
 EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
@@ -17,5 +19,9 @@ Global
 		{C422F683-B165-4C41-A1FE-C1BC64A24DA3}.Debug|Any CPU.Build.0 = Debug|Any CPU
 		{C422F683-B165-4C41-A1FE-C1BC64A24DA3}.Release|Any CPU.ActiveCfg = Release|Any CPU
 		{C422F683-B165-4C41-A1FE-C1BC64A24DA3}.Release|Any CPU.Build.0 = Release|Any CPU
+		{C7DEE7B2-57A3-4610-A7D3-58872A312580}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{C7DEE7B2-57A3-4610-A7D3-58872A312580}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{C7DEE7B2-57A3-4610-A7D3-58872A312580}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{C7DEE7B2-57A3-4610-A7D3-58872A312580}.Release|Any CPU.Build.0 = Release|Any CPU
 	EndGlobalSection
 EndGlobal

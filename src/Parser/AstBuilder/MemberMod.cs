@@ -1,4 +1,4 @@
-﻿namespace Luft.AstBuilder;
+﻿namespace Luft.Parser.AstBuilder;
 
 [Flags]
 public enum MemberMod

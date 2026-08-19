@@ -1,9 +1,9 @@
-﻿using Luft.AstBuilder.Ast;
+﻿using Luft.Parser.AstBuilder.Ast;
 
-namespace Luft.AstBuilder;
+namespace Luft.Parser.AstBuilder;
 
 
-internal record TypeRef(string Name, bool IsRef, bool IsNullable, bool IsAutoVar = false, TypeRef? ElementType = null, ExpressionNode? ArraySize = null, ValueList<TypeRef>? TypeArguments = null, bool IsError = false)
+public record TypeRef(string Name, bool IsRef, bool IsNullable, bool IsAutoVar = false, TypeRef? ElementType = null, ExpressionNode? ArraySize = null, ValueList<TypeRef>? TypeArguments = null, bool IsError = false)
 {
     public bool IsArray => ElementType is not null;
     public bool IsGeneric => TypeArguments is { Count: > 0 };

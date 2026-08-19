@@ -1,6 +1,4 @@
-﻿using System.Text.RegularExpressions;
-
-namespace Luft.Lexer;
+﻿namespace Luft.Parser.Lexer;
 
 public record Token(TokenType Type, string Value, SourceSpan Span)
 {

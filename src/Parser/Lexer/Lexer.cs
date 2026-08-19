@@ -1,6 +1,6 @@
 ﻿using System.Runtime.CompilerServices;
 
-namespace Luft.Lexer;
+namespace Luft.Parser.Lexer;
 
 public static class Lexer
 {
@@ -480,7 +480,7 @@ public static class Lexer
 
             // Variable & Access Modifiers
             "val" or "var" or "const" => TokenType.VariableKind,
-            "public" or "internal" or "protected" or "private" => TokenType.AccessModifierKind,
+            "public" or "public" or "protected" or "private" => TokenType.AccessModifierKind,
             "struct" or "record" or "class" or "enum" or "trait" or "extension" or "annotation" => TokenType.InstanceKind,
 
             // Control Flow

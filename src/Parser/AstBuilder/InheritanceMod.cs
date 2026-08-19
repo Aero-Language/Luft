@@ -1,7 +1,7 @@
-﻿namespace Luft.AstBuilder;
+﻿namespace Luft.Parser.AstBuilder;
 
 [Flags]
-internal enum InheritanceMod
+public enum InheritanceMod
 {
     None = 0,
     Virtual,    // Method can be overridden

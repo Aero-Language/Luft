@@ -1,12 +1,12 @@
-﻿namespace Luft.AstBuilder.Ast;
+﻿namespace Luft.Parser.AstBuilder.Ast;
 
-internal record BlockStatementNode
+public record BlockStatementNode
 (
     ValueList<StatementNode> Statements,
     SourceSpan Span
 ) : StatementNode(Span);
 
-internal record VariableStatementNode
+public record VariableStatementNode
 (
     ValueList<AnnotationNode> Annotations,
     DeclarationKind DeclKind,
@@ -16,36 +16,36 @@ internal record VariableStatementNode
     SourceSpan Span
 ) : StatementNode(Span);
 
-internal record ReturnStatementNode
+public record ReturnStatementNode
 (
     ExpressionNode? Value,
     SourceSpan Span
 ) : StatementNode(Span);
 
-internal record BreakStatementNode
+public record BreakStatementNode
 (
     SourceSpan Span
 ) : StatementNode(Span);
 
-internal record ContinueStatementNode
+public record ContinueStatementNode
 (
     SourceSpan Span
 ) : StatementNode(Span);
 
-internal record WhileStatementNode
+public record WhileStatementNode
 (
     ExpressionNode? Condition,
     BlockStatementNode? Body,
     SourceSpan Span
 ) : StatementNode(Span);
 
-internal record ExpressionStatementNode
+public record ExpressionStatementNode
 (
     ExpressionNode Expression,
     SourceSpan Span
 ) : StatementNode(Span);
 
-internal record ImportStatementNode
+public record ImportStatementNode
 (
     string TargetPath,
     ValueList<string>? Imports, // Null here means importing everything from the module

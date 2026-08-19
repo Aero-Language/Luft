@@ -1,11 +1,11 @@
-using Luft.AstBuilder.Ast;
-using Luft.Lexer;
+using Luft.Parser.AstBuilder.Ast;
+using Luft.Parser.Lexer;
 
-namespace Luft.AstBuilder;
+namespace Luft.Parser.AstBuilder;
 
-internal static class AstBuilder
+public static class AstBuilder
 {
-    internal static FileNode BuildAst(List<Token> rawTokens)
+    public static FileNode BuildAst(List<Token> rawTokens)
     {
         var tokenIndex = 0;
         var tokens = rawTokens.Where(t => t.Type is not TokenType.Whitespace).ToList();

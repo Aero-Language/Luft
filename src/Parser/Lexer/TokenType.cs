@@ -1,4 +1,4 @@
-﻿namespace Luft.Lexer;
+﻿namespace Luft.Parser.Lexer;
 
 public enum TokenType
 {
@@ -21,7 +21,7 @@ public enum TokenType
     // Keywords
     // Grouped keywords
     VariableKind,           // val, var, const
-    AccessModifierKind,     // public, internal, protected, private
+    AccessModifierKind,     // public, public, protected, private
     InstanceKind,           // struct, record, class, enum, trait, extension, annotation
     
     

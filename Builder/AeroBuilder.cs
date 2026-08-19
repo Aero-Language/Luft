@@ -1,10 +1,9 @@
-﻿using Luft.Lexer;
-using static Luft.Lexer.Lexer;
-using static Luft.AstBuilder.AstBuilder;
+﻿using static Luft.Parser.Lexer.Lexer;
+using static Luft.Parser.AstBuilder.AstBuilder;
 
-namespace Luft;
+namespace Luft.Builder;
 
-public class Builder
+public class AeroBuilder
 {
     /// <summary>
     /// Builds the <paramref name="files"/> as a module
@@ -18,7 +17,6 @@ public class Builder
             var tokens = Tokenize(file); // Turns the string of code into tokens
             var ast = BuildAst(tokens); // Turns the tokens into a tree of nodes
         }
-        
         
         return string.Empty;
     }

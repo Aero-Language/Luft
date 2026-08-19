@@ -1,4 +1,4 @@
-namespace Luft.AstBuilder;
+namespace Luft.Parser.AstBuilder;
 
 public enum DeclarationKind
 {

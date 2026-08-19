@@ -1,6 +1,6 @@
-﻿namespace Luft.AstBuilder.Ast;
+﻿namespace Luft.Parser.AstBuilder.Ast;
 
-internal record FunctionDeclarationNode
+public record FunctionDeclarationNode
 (
     ValueList<AnnotationNode> Annotations,
     AccessMod AccessMod,
@@ -13,7 +13,7 @@ internal record FunctionDeclarationNode
     SourceSpan Span
 ) : DeclarationNode(Span);
 
-internal record ExtensionDeclarationNode
+public record ExtensionDeclarationNode
 (
     FunctionDeclarationNode? Function,
     PropertyDeclarationNode? Property,
@@ -21,14 +21,14 @@ internal record ExtensionDeclarationNode
     SourceSpan Span
 ) : DeclarationNode(Span);
 
-internal record ExtensionBlockDeclarationNode
+public record ExtensionBlockDeclarationNode
 (
     TypeRef TargetType,
     ValueList<ExtensionDeclarationNode> Extensions,
     SourceSpan Span
 ) : DeclarationNode(Span);
 
-internal record StructDeclarationNode
+public record StructDeclarationNode
 (
     ValueList<AnnotationNode> Annotations,
     AccessMod AccessMod,
@@ -40,7 +40,7 @@ internal record StructDeclarationNode
     SourceSpan Span
 ) : DeclarationNode(Span);
 
-internal record AnnotationDeclarationNode
+public record AnnotationDeclarationNode
 (
     ValueList<AnnotationNode> Annotations,
     AccessMod AccessMod,
@@ -52,7 +52,7 @@ internal record AnnotationDeclarationNode
     SourceSpan Span
 ) : DeclarationNode(Span);
 
-internal record RecordDeclarationNode
+public record RecordDeclarationNode
 (
     ValueList<AnnotationNode> Annotations,
     AccessMod AccessMod,
@@ -63,7 +63,7 @@ internal record RecordDeclarationNode
     SourceSpan Span
 ) : DeclarationNode(Span);
 
-internal record ClassDeclarationNode
+public record ClassDeclarationNode
 (
     ValueList<AnnotationNode> Annotations,
     AccessMod AccessMod,
@@ -76,7 +76,7 @@ internal record ClassDeclarationNode
     SourceSpan Span
 ) : DeclarationNode(Span);
 
-internal record TraitDeclarationNode
+public record TraitDeclarationNode
 (
     ValueList<AnnotationNode> Annotations,
     AccessMod AccessMod,
@@ -87,7 +87,7 @@ internal record TraitDeclarationNode
     SourceSpan Span
 ) : DeclarationNode(Span);
 
-internal record EnumMemberNode
+public record EnumMemberNode
 (
     ValueList<AnnotationNode> Annotations,
     string Name,
@@ -96,7 +96,7 @@ internal record EnumMemberNode
 ) : DeclarationNode(Span); // Inheriting from DeclarationNode makes symbol table registration easier
 
 // Represents the enum or enum class declaration itself
-internal record EnumDeclarationNode
+public record EnumDeclarationNode
 (
     ValueList<AnnotationNode> Annotations,
     AccessMod AccessMod,
@@ -107,7 +107,7 @@ internal record EnumDeclarationNode
     SourceSpan Span
 ) : DeclarationNode(Span);
 
-internal record PropertyDeclarationNode
+public record PropertyDeclarationNode
 (
     ValueList<AnnotationNode> Annotations,
     AccessMod AccessMod,
@@ -119,7 +119,7 @@ internal record PropertyDeclarationNode
     SourceSpan Span
 ) : DeclarationNode(Span);
 
-internal record ConstructorDeclarationNode
+public record ConstructorDeclarationNode
 (
     ValueList<AnnotationNode> Annotations,
     AccessMod AccessMod,
@@ -128,14 +128,14 @@ internal record ConstructorDeclarationNode
     SourceSpan Span
 ) : DeclarationNode(Span);
 
-internal record DestructorDeclarationNode
+public record DestructorDeclarationNode
 (
     ValueList<AnnotationNode> Annotations,
     BlockStatementNode Body,
     SourceSpan Span
 ) : DeclarationNode(Span);
 
-internal record ModuleDeclarationNode
+public record ModuleDeclarationNode
 (
     string ModulePath,
     DeclarationNode[] Declarations, 

@@ -1,4 +1,4 @@
-﻿namespace Luft.Parser.Lexer;
+﻿namespace Luft.Lexer;
 
 public enum TokenType
 {

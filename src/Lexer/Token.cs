@@ -1,4 +1,6 @@
-﻿namespace Luft.Parser.Lexer;
+﻿using Luft.Utility;
+
+namespace Luft.Lexer;
 
 public record Token(TokenType Type, string Value, SourceSpan Span)
 {

@@ -1,4 +1,4 @@
-﻿namespace Luft.Parser;
+﻿namespace Luft.Utility;
 
 public record SourceSpan(string FilePath, TextLocation Start, TextLocation End)
 {

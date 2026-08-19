@@ -1,6 +1,7 @@
 ﻿using System.Runtime.CompilerServices;
+using Luft.Utility;
 
-namespace Luft.Parser.Lexer;
+namespace Luft.Lexer;
 
 public static class Lexer
 {

@@ -9,7 +9,10 @@
     </PropertyGroup>
 
     <ItemGroup>
+      <ProjectReference Include="..\Lexer\Lexer.csproj" />
+      <ProjectReference Include="..\Parser\Parser.csproj" />
       <ProjectReference Include="..\src\Parser\Parser.csproj" />
+      <ProjectReference Include="..\Utility\Utility.csproj" />
     </ItemGroup>
 
 </Project>

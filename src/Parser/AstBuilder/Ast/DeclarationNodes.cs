@@ -1,4 +1,6 @@
-﻿namespace Luft.Parser.AstBuilder.Ast;
+﻿using Luft.Utility;
+
+namespace Luft.Parser.AstBuilder.Ast;
 
 public record FunctionDeclarationNode
 (

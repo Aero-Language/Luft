@@ -1,6 +1,6 @@
 ﻿using System.Collections;
 
-namespace Luft.Parser;
+namespace Luft.Utility;
 
 /// <summary>
 /// A list that compares the items of the list instead of the list instance

@@ -1,4 +1,4 @@
-﻿namespace Luft.Parser;
+﻿namespace Luft.Utility;
 
 public static class Extensions
 {

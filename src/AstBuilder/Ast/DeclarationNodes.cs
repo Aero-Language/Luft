@@ -1,6 +1,6 @@
 ﻿using Luft.Utility;
 
-namespace Luft.Parser.AstBuilder.Ast;
+namespace Luft.AstBuilder.Ast;
 
 public record FunctionDeclarationNode
 (
@@ -9,16 +9,15 @@ public record FunctionDeclarationNode
     MemberMod MemberMods,
     TypeRef ReturnType,
     string Name,
-    ValueList<TypeRef>? GenericParameters,
+    ValueList<GenericParamNode>? GenericParameters,
     ValueList<ParamNode> Parameters,
-    BlockStatementNode? Body,
+    BlockExpressionNode? Body,
     SourceSpan Span
 ) : DeclarationNode(Span);
 
 public record ExtensionDeclarationNode
 (
-    FunctionDeclarationNode? Function,
-    PropertyDeclarationNode? Property,
+    DeclarationNode Extension,
     TypeRef TargetType,
     SourceSpan Span
 ) : DeclarationNode(Span);
@@ -37,8 +36,7 @@ public record StructDeclarationNode
     MemberMod MemberMods,
     string Name,
     ValueList<DeclarationNode> Declarations,
-    TypeRef? BaseStruct,
-    ValueList<TypeRef> Traits,
+    ValueList<TypeRef> Implements,
     SourceSpan Span
 ) : DeclarationNode(Span);
 
@@ -48,9 +46,8 @@ public record AnnotationDeclarationNode
     AccessMod AccessMod,
     MemberMod MemberMods,
     string Name,
+    ValueList<GenericParamNode> GenericParameters,
     ValueList<DeclarationNode> Declarations,
-    TypeRef? BaseStruct,
-    ValueList<TypeRef> Traits,
     SourceSpan Span
 ) : DeclarationNode(Span);
 
@@ -60,8 +57,9 @@ public record RecordDeclarationNode
     AccessMod AccessMod,
     MemberMod MemberMods,
     string Name,
-    ValueList<VariableStatementNode> Properties,
-    TypeRef? BaseRecord,
+    ValueList<GenericParamNode> GenericParameters,
+    ValueList<DeclarationNode> Properties,
+    ValueList<TypeRef> Implements,
     SourceSpan Span
 ) : DeclarationNode(Span);
 
@@ -73,8 +71,7 @@ public record ClassDeclarationNode
     string Name,
     ValueList<GenericParamNode> GenericParameters,
     ValueList<DeclarationNode> Declarations,
-    TypeRef? BaseClass,
-    ValueList<TypeRef> Traits,
+    ValueList<TypeRef> Implements,
     SourceSpan Span
 ) : DeclarationNode(Span);
 
@@ -91,7 +88,6 @@ public record TraitDeclarationNode
 
 public record EnumMemberNode
 (
-    ValueList<AnnotationNode> Annotations,
     string Name,
     ExpressionNode? Value, // Handles the '= "steve"' or '= 1' part
     SourceSpan Span
@@ -102,9 +98,9 @@ public record EnumDeclarationNode
 (
     ValueList<AnnotationNode> Annotations,
     AccessMod AccessMod,
-    bool IsEnumClass, // true for 'enum class', false for standard 'enum'
     string Name,
-    TypeRef? BaseType, // Captures the ': String' part
+    TypeRef? MemberType, // This should be constrained to integer-only
+    ValueList<VariableDeclarationNode>? Parameters, // Null here indicates a normal enum instead of an enum class
     ValueList<EnumMemberNode> Members,
     SourceSpan Span
 ) : DeclarationNode(Span);
@@ -113,27 +109,39 @@ public record PropertyDeclarationNode
 (
     ValueList<AnnotationNode> Annotations,
     AccessMod AccessMod,
-    DeclarationKind DeclKind,
     TypeRef Type,
     string Name,
     PropertyAccessorNode? Getter, // Null if write-only
     PropertyAccessorNode? Setter, // Null if read-only
+    ExpressionNode? Initializer,
+    SourceSpan Span
+) : DeclarationNode(Span);
+
+public record VariableDeclarationNode
+(
+    ValueList<AnnotationNode> Annotations,
+    AccessMod AccessMod,
+    VariableKind DeclKind,
+    TypeRef Type,
+    string Name,
+    ExpressionNode? Initializer,
     SourceSpan Span
 ) : DeclarationNode(Span);
 
 public record ConstructorDeclarationNode
 (
     ValueList<AnnotationNode> Annotations,
+    bool IsPrimary,
     AccessMod AccessMod,
     ValueList<ParamNode> Parameters,
-    BlockStatementNode Body,
+    BlockExpressionNode Body,
     SourceSpan Span
 ) : DeclarationNode(Span);
 
 public record DestructorDeclarationNode
 (
     ValueList<AnnotationNode> Annotations,
-    BlockStatementNode Body,
+    BlockExpressionNode Body,
     SourceSpan Span
 ) : DeclarationNode(Span);
 

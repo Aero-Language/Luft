@@ -1,5 +1,5 @@
 ﻿using static Luft.Lexer.Lexer;
-using static Luft.Parser.AstBuilder.AstBuilder;
+using static Luft.AstBuilder.Builder;
 
 namespace Luft.Builder;
 

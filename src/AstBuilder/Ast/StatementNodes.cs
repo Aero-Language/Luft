@@ -1,17 +1,11 @@
 ﻿using Luft.Utility;
 
-namespace Luft.Parser.AstBuilder.Ast;
-
-public record BlockStatementNode
-(
-    ValueList<StatementNode> Statements,
-    SourceSpan Span
-) : StatementNode(Span);
+namespace Luft.AstBuilder.Ast;
 
 public record VariableStatementNode
 (
     ValueList<AnnotationNode> Annotations,
-    DeclarationKind DeclKind,
+    VariableKind DeclKind,
     TypeRef Type,
     string Name,
     ExpressionNode? Initializer,
@@ -37,7 +31,7 @@ public record ContinueStatementNode
 public record WhileStatementNode
 (
     ExpressionNode? Condition,
-    BlockStatementNode? Body,
+    BlockExpressionNode? Body,
     SourceSpan Span
 ) : StatementNode(Span);
 
@@ -50,6 +44,6 @@ public record ExpressionStatementNode
 public record ImportStatementNode
 (
     string TargetPath,
-    ValueList<string>? Imports, // Null here means importing everything from the module
+    ValueList<string> Imports, // Null here means importing everything from the module
     SourceSpan Span
 ) : StatementNode(Span);

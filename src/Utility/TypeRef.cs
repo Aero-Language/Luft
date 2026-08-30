@@ -1,10 +1,9 @@
-﻿using Luft.Parser.AstBuilder.Ast;
-using Luft.Utility;
+﻿using Luft.Utility;
 
-namespace Luft.Parser.AstBuilder;
+namespace Luft.AstBuilder;
 
 
-public record TypeRef(string Name, bool IsRef, bool IsNullable, bool IsAutoVar = false, TypeRef? ElementType = null, ExpressionNode? ArraySize = null, ValueList<TypeRef>? TypeArguments = null, bool IsError = false)
+public record TypeRef(string Name, bool IsRef, bool IsNullable, bool IsAutoVar = false, TypeRef? ElementType = null, ValueList<TypeRef>? TypeArguments = null, bool IsError = false)
 {
     public bool IsArray => ElementType is not null;
     public bool IsGeneric => TypeArguments is { Count: > 0 };
@@ -22,13 +21,12 @@ public record TypeRef(string Name, bool IsRef, bool IsNullable, bool IsAutoVar =
     public int ArrayRank => ElementType is null ? 0 : 1 + ElementType.ArrayRank;
     
     
-    public override string ToString()
+    public string ToString(int arraySize)
     {
         if (IsArray)
         {
-            var sizeStr = ArraySize != null ? ArraySize.ToString() : "";
             var nullStr = IsNullable ? "?" : "";
-            return $"{ElementType}[{sizeStr}]{nullStr}";
+            return $"{ElementType}[{arraySize}]{nullStr}";
         }
         
         var baseStr = Name;
@@ -44,6 +42,8 @@ public record TypeRef(string Name, bool IsRef, bool IsNullable, bool IsAutoVar =
         return baseStr;
     }
 
-    public static readonly TypeRef AutoVar = new TypeRef("", false, false, true);
+    public static readonly TypeRef AutoVar = new TypeRef("", false, false, IsAutoVar: true);
     public static readonly TypeRef Error = new TypeRef("", false, false, IsError: true);
+    
+    public static readonly TypeRef Void = new TypeRef("Void", false, false);
 }

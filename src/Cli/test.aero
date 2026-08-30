@@ -1,7 +1,7 @@
 /*
     Aero Programming Language - Comprehensive Test Suite
     Tests: Modules, Imports/Exports, Lexer Tokens, OOP (Classes, Structs, Traits), 
-           Control Flow, Generics, and Advanced Type References.
+    Control Flow, Generics, and Advanced Type References.
 */
 
 import Core.System
@@ -15,30 +15,52 @@ module AeroTests.ComprehensiveTest {
         GameOver
     }
     
-    public enum class PlayerNames: String { // Basically a collection of static val's, NOT constants, unchangeable, but not constant
-        Steve = "steve",
-        Kevin = "kevin15"
+    public enum PlayerName(Name: String) { // Basically a collection of static val's, NOT constants, unchangeable, but not constant
+        Steve = PlayerName("steve"),
+        Kevin = PlayerName("kevin15")
     }
 
-    public trait ISerializable { // A trait is basically an Interface
+    public extension fun PlayerName.Capitalized(): String {
+        return it.Name[0].Upper() + it.Name[1..]
+    }
+    
+    public GameState extensions {
+        public fun IsPlaying(): Bool {
+            it is GameState.Playing
+        }
+    }
+
+    public trait TSerializable { // A trait is basically an Interface
         fun Serialize() -> String // Types are PascalCase
     }
 
-    public trait IUpdatable {
+    public trait TUpdatable {
         fun Update(deltaTime: Float) -> Void
     }
 
-    public struct Vector3 : ISerializable {
+    public struct Vector2(var X: Float, var Y: Float) : TSerializable {
+        public impl fun Serialize() -> String {
+            return $"\{ X: {X}|Y: {Y}\}"
+        }
+    }
+    
+    public class Tuple<T1: String, T2> : TSerializable {
+        public impl fun Serialize() -> String {
+            $"[{T1} and {T2::String}]"
+        }
+    }
+
+    public struct Vector3 : TSerializable {
         var X: Float // Properties in structs are public by default
         var Y: Float
         var Z: Float
 
-        public impl Serialize() -> String {
+        public impl fun Serialize() -> String {
             return $"\{ X: {X}|Y: {Y}|Z: {Z} \}" // Backslash can always escape chars
         }
     }
 
-    internal static Int AsState() -> GameState {
+    internal extension Int AsState() -> GameState {
         return GameState[self] // Self here is the Int instance that the extension was called on | enums can be indexed and are of type int by default
     }
     
@@ -49,7 +71,7 @@ module AeroTests.ComprehensiveTest {
     public class Entity : IUpdatable {
         // Property testing (Getter/Setter Nodes)
         // This uses a hidden backing property so that self = value does not invoke the setter
-        Int Id {
+        public Id: Int {
             get { self } // This can have an optional return statement but blocks dont need to have return, it can be inferred by being the last expression in a block
             // Getter/Setter can also use 'get => someValue' instead of 'get { somevalue }'
             set { self = value }

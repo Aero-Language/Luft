@@ -1,11 +1,10 @@
-﻿namespace Luft.Parser.AstBuilder;
+﻿namespace Luft.AstBuilder;
 
-[Flags]
 public enum InheritanceMod
 {
     None = 0,
     Virtual,    // Method can be overridden
     Abstract,   // Pure virtual, no body allowed
-    Sealed,     // Overrides but prevents further overriding
+    Sealed,     // Prevents further overriding
     Implements  // Implements an abstract/virtual
 }

@@ -1,13 +1,27 @@
-﻿namespace Luft.Utility;
+﻿using Luft.AstBuilder;
+
+namespace Luft.Utility;
 
 public static class Extensions
 {
+    public static T OrNew<T>(this T? element) where T : new() => element ?? new T();
+    
+    
     // SourceSpan extensions
     public static SourceSpan From(this SourceSpan span, TextLocation target) => span with { Start = target };
+    public static SourceSpan From(this SourceSpan span, SourceSpan target) => span.From(target.Start);
     public static SourceSpan To(this SourceSpan span, TextLocation target) => span with { End = target };
+    public static SourceSpan To(this SourceSpan span, SourceSpan target) => span.To(target.End);
     
     // ValueList extensions
     public static ValueList<T> ToValueList<T>(this IEnumerable<T> items) => new ValueList<T>(items);
+    
+    // TypeRef extensions
+    public static TypeRef ToType(this string str) => new TypeRef(str, false, false);
+    
+    // Identifier extensions
+    public static string[] IdentifierParts(this string ident) => ident.Split(".");
+    public static string FirstIdentifier(this string ident) => ident[..ident.IndexOf('.')];
     
     
     // Helper constants

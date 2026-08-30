@@ -2,20 +2,22 @@
 
     <PropertyGroup>
         <TargetFramework>net10.0</TargetFramework>
-        <RootNamespace>Luft.Builder</RootNamespace>
+        <RootNamespace>Luft.Lsp</RootNamespace>
         <LangVersion>latest</LangVersion>
         <ImplicitUsings>enable</ImplicitUsings>
         <Nullable>enable</Nullable>
+        <PublishAot>true</PublishAot>
     </PropertyGroup>
 
     <ItemGroup>
+      <ProjectReference Include="..\Builder\Builder.csproj" />
       <ProjectReference Include="..\Lexer\Lexer.csproj" />
-      <ProjectReference Include="..\AstBuilder\AstBuilder.csproj" />
       <ProjectReference Include="..\Utility\Utility.csproj" />
     </ItemGroup>
 
     <ItemGroup>
-      <PackageReference Include="LLVMSharp" Version="20.1.2" />
+        <PackageReference Include="StreamJsonRpc" Version="2.25.29" />
+        <PackageReference Include="Microsoft.VisualStudio.LanguageServer.Protocol" Version="17.2.8" />
     </ItemGroup>
 
 </Project>

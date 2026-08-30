@@ -409,14 +409,14 @@ public static class Lexer
                 ('%', '=') => TokenType.ModuloAssign,
                 ('&', '=') => TokenType.AndAssign,
                 ('|', '=') => TokenType.OrAssign,
-                ('^', '=') => TokenType.XORAssign,
+                ('^', '=') => TokenType.XorAssign,
                 ('-', '>') => TokenType.ArrowSymbol,
                 ('.', '.') => TokenType.RangeSymbol,
                 ('<', '<') => TokenType.LeftShift,
                 ('>', '>') => TokenType.RightShift,
                 (':', ':') => TokenType.CastSymbol,
                 (';', ';') => TokenType.EmptyStatement,
-                ('=', '>') => TokenType.SingleBlockSymbol,
+                ('=', '>') => TokenType.EqualArrow,
                 _ => TokenType.Unknown
             };
             
@@ -477,12 +477,14 @@ public static class Lexer
             // Literals
             "true" or "false" => TokenType.BooleanLiteral,
             "null" => TokenType.NullLiteral,
-            "self" or "this" => TokenType.SelfLiteral,
+            "it" => TokenType.ItLiteral,
+            "self" => TokenType.SelfLiteral,
 
             // Variable & Access Modifiers
             "val" or "var" or "const" => TokenType.VariableKind,
-            "public" or "public" or "protected" or "private" => TokenType.AccessModifierKind,
-            "struct" or "record" or "class" or "enum" or "trait" or "extension" or "annotation" => TokenType.InstanceKind,
+            "public" or "internal" or "protected" or "private" => TokenType.AccessModifierKind,
+            "static" or "weak" or "partial" or "unsafe" => TokenType.MemberModifierKind,
+            "struct" or "record" or "class" or "enum" or "trait" or "extension" or "extensions" or "annotation" => TokenType.InstanceKind,
 
             // Control Flow
             "if" => TokenType.IfKeyword,
@@ -501,14 +503,18 @@ public static class Lexer
             "from" => TokenType.FromKeyword,
 
             // Standalone Keywords
-            "fn" or "function" => TokenType.FunctionKeyword,
+            "fun" => TokenType.FunctionKeyword,
             "return" => TokenType.ReturnKeyword,
+            "yield" => TokenType.YieldKeyword,
             "ref" => TokenType.RefKeyword,
             "concurrent" => TokenType.ConcurrentKeyword,
             "spawn" => TokenType.SpawnKeyword,
             "get" => TokenType.GetKeyword,
             "set" => TokenType.SetKeyword,
 
+            // Special Opertors
+            "is" => TokenType.IsOperator,
+            
             // Default Identifier
             _ => TokenType.Identifier
         };

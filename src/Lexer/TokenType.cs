@@ -13,6 +13,7 @@ public enum TokenType
     CharLiteral,
     BooleanLiteral,
     NullLiteral,
+    ItLiteral,
     SelfLiteral,
 
     // Identifiers
@@ -21,9 +22,9 @@ public enum TokenType
     // Keywords
     // Grouped keywords
     VariableKind,           // val, var, const
-    AccessModifierKind,     // public, public, protected, private
-    InstanceKind,           // struct, record, class, enum, trait, extension, annotation
-    
+    AccessModifierKind,     // public, internal, protected, private
+    MemberModifierKind,     // static, weak, partial, unsafe
+    InstanceKind,           // struct, record, class, enum, trait, extension(s), annotation
     
     // Control-flow
     IfKeyword,
@@ -44,13 +45,16 @@ public enum TokenType
     // Standalone keywords
     FunctionKeyword,
     ReturnKeyword,
+    YieldKeyword,
     RefKeyword,
     ConcurrentKeyword,
     SpawnKeyword,
     GetKeyword,
     SetKeyword,
     
+    
     // Operators
+    IsOperator,
     LeftShiftAssign,
     RightShiftAssign,
     Equality,
@@ -68,10 +72,10 @@ public enum TokenType
     ModuloAssign,
     AndAssign,
     OrAssign,
-    XORAssign,
+    XorAssign,
     
     ArrowSymbol,
-    SingleBlockSymbol,
+    EqualArrow,
     RangeSymbol,
     
     LeftShift,

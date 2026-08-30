@@ -1,4 +1,4 @@
-﻿namespace Luft.Parser.AstBuilder.Ast;
+﻿namespace Luft.AstBuilder.Ast;
 
 public abstract class AstVisitor<T>
 {
@@ -18,13 +18,13 @@ public abstract class AstVisitor<T>
         EnumMemberNode n => VisitEnumMember(n),
         EnumDeclarationNode n => VisitEnum(n),
         PropertyDeclarationNode n => VisitProperty(n),
+        VariableDeclarationNode n => VisitVariableDecl(n),
         ConstructorDeclarationNode n => VisitConstructor(n),
         DestructorDeclarationNode n => VisitDestructor(n),
         ModuleDeclarationNode n => VisitModule(n),
         
-        
         // StatementNodes
-        BlockStatementNode n => VisitBlock(n),
+        BlockExpressionNode n => VisitBlock(n),
         AnnotationNode n => VisitAnnotation(n),
         VariableStatementNode n => VisitVariable(n),
         ReturnStatementNode n => VisitReturn(n),
@@ -72,12 +72,13 @@ public abstract class AstVisitor<T>
     protected virtual T VisitEnumMember(EnumMemberNode node) => Default(node);
     protected virtual T VisitEnum(EnumDeclarationNode node) => Default(node);
     protected virtual T VisitProperty(PropertyDeclarationNode node) => Default(node);
+    protected virtual T VisitVariableDecl(VariableDeclarationNode node) => Default(node);
     protected virtual T VisitConstructor(ConstructorDeclarationNode node) => Default(node);
     protected virtual T VisitDestructor(DestructorDeclarationNode node) => Default(node);
     protected virtual T VisitModule(ModuleDeclarationNode node) => Default(node);
 
     // StatementNodes
-    protected virtual T VisitBlock(BlockStatementNode node) => Default(node);
+    protected virtual T VisitBlock(BlockExpressionNode node) => Default(node);
     protected virtual T VisitAnnotation(AnnotationNode node) => Default(node);
     protected virtual T VisitVariable(VariableStatementNode node) => Default(node);
     protected virtual T VisitReturn(ReturnStatementNode node) => Default(node);

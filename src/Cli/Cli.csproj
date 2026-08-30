@@ -11,7 +11,8 @@
 
     <ItemGroup>
       <ProjectReference Include="..\..\Builder\Builder.csproj" />
-      <ProjectReference Include="..\Parser\Parser.csproj" />
+      <ProjectReference Include="..\Builder\Builder.csproj" />
+      <ProjectReference Include="..\AstBuilder\AstBuilder.csproj" />
     </ItemGroup>
 
     <ItemGroup>
@@ -19,7 +20,7 @@
     </ItemGroup>
 
     <ItemGroup>
-      <PackageReference Include="AeroLang.ACLI" Version="0.2.0" />
+      <PackageReference Include="AeroLang.ACLI" Version="0.2.3" />
     </ItemGroup>
 
 </Project>

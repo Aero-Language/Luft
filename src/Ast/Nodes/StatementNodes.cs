@@ -1,12 +1,11 @@
 ﻿using Luft.Utility;
 
-namespace Luft.AstBuilder.Ast;
+namespace Luft.Ast.Nodes;
 
 public record VariableStatementNode
 (
-    ValueList<AnnotationNode> Annotations,
-    VariableKind DeclKind,
-    TypeRef Type,
+    VariableKind VarKind,
+    AeroType Type,
     string Name,
     ExpressionNode? Initializer,
     SourceSpan Span
@@ -40,6 +39,16 @@ public record ExpressionStatementNode
     ExpressionNode Expression,
     SourceSpan Span
 ) : StatementNode(Span);
+
+public record AssignmentStatementNode
+(
+    ExpressionNode Target,
+    Operator Operator,
+    ExpressionNode Value,
+    SourceSpan Span
+) : StatementNode(Span);
+
+public record EmptyStatementNode(SourceSpan Span) : StatementNode(Span);
 
 public record ImportStatementNode
 (

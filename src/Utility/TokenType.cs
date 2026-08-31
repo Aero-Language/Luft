@@ -21,10 +21,11 @@ public enum TokenType
     
     // Keywords
     // Grouped keywords
-    VariableKind,           // val, var, const
-    AccessModifierKind,     // public, internal, protected, private
-    MemberModifierKind,     // static, weak, partial, unsafe
-    InstanceKind,           // struct, record, class, enum, trait, extension(s), annotation
+    VariableKind,            // val, var, const
+    AccessModifierKind,      // public, internal, protected, private
+    MemberModifierKind,      // static, weak, partial, unsafe
+    InheritanceModifierKind, // virtual, abstract, sealed, impl
+    InstanceKind,            // struct, record, class, enum, trait, extension(s), annotation, fun
     
     // Control-flow
     IfKeyword,
@@ -43,7 +44,6 @@ public enum TokenType
     FromKeyword,
     
     // Standalone keywords
-    FunctionKeyword,
     ReturnKeyword,
     YieldKeyword,
     RefKeyword,
@@ -54,7 +54,10 @@ public enum TokenType
     
     
     // Operators
-    IsOperator,
+    Is,
+    Not,
+    And,
+    Or,
     LeftShiftAssign,
     RightShiftAssign,
     Equality,
@@ -88,17 +91,16 @@ public enum TokenType
     Assign,
     LessThan,
     GreaterThan,
-    Not,
+    LogicalNot,
     BitwiseAnd,
     BitwiseOr,
     BitwiseXor,
     Tilde,
-    Nullability,
+    Nullable,
     At,
     CastSymbol,
     
     // Punctuation
-    EmptyStatement,
     ParenthesisOpen,
     ParenthesisClose,
     BracketOpen,

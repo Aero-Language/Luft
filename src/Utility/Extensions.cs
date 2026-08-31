@@ -1,6 +1,4 @@
-﻿using Luft.AstBuilder;
-
-namespace Luft.Utility;
+﻿namespace Luft.Utility;
 
 public static class Extensions
 {
@@ -16,8 +14,8 @@ public static class Extensions
     // ValueList extensions
     public static ValueList<T> ToValueList<T>(this IEnumerable<T> items) => new ValueList<T>(items);
     
-    // TypeRef extensions
-    public static TypeRef ToType(this string str) => new TypeRef(str, false, false);
+    // AeroType extensions
+    public static AeroType ToType(this string str) => new ScalarType(str, false, false);
     
     // Identifier extensions
     public static string[] IdentifierParts(this string ident) => ident.Split(".");
@@ -27,8 +25,8 @@ public static class Extensions
     // Helper constants
     public static HashSet<char> HexChars =>
     [
-        '0', '1', '2', '3', '4', '5', '6', '7', '8', '9', 'a', 'b', 'c', 'd', 'e', 'f', 'A', 'B', 'C', 'D', 'E', 'F'
+        '0', '1', '2', '3', '4', '5', '6', '7', '8', '9', 'a', 'b', 'c', 'd', 'e', 'f', 'A', 'B', 'C', 'D', 'E', 'F', '_'
     ];
     
-    public static HashSet<char> BinChars => ['0', '1'];
+    public static HashSet<char> BinChars => ['0', '1', '_'];
 }

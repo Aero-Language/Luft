@@ -1,16 +1,16 @@
 ﻿using Luft.Utility;
 
-namespace Luft.AstBuilder.Ast;
+namespace Luft.Ast.Nodes;
 
 public abstract record AstNode(SourceSpan Span);
 
 public abstract record DeclarationNode(SourceSpan Span) : AstNode(Span);
 public record ErrorDeclarationNode(SourceSpan Span) : DeclarationNode(Span);
 public abstract record StatementNode(SourceSpan Span) : AstNode(Span);
-public abstract record ExpressionNode(TypeRef NodeType, SourceSpan Span) : AstNode(Span);
+public abstract record ExpressionNode(AeroType NodeType, SourceSpan Span) : AstNode(Span);
 
-public record FileNode(ModuleDeclarationNode[] Modules, ImportStatementNode[] Imports, SourceSpan Span) : AstNode(Span);
-public record GenericParamNode(string Name, TypeRef TypeConstraint, SourceSpan Span) : AstNode(Span);
+public record FileNode(ModuleDeclarationNode[] Modules, ImportStatementNode[] Imports, DeclarationNode[] Globals, SourceSpan Span) : AstNode(Span);
+public record GenericParamNode(string Name, AeroType TypeConstraint, SourceSpan Span) : AstNode(Span);
 
 public record PropertyAccessorNode
 (

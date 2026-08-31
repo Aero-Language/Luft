@@ -1,8 +1,8 @@
 ﻿using ACLI;
-using Luft.AstBuilder.Ast;
+using Luft.Ast;
+using Luft.Ast.Nodes;
 using Luft.Builder;
-using static Luft.Lexer.Lexer;
-using static Luft.AstBuilder.Builder;
+using Luft.Lexer;
 
 namespace Luft.Cli;
 
@@ -27,26 +27,25 @@ public static class Cli
         var builder = new AeroBuilder();
         // ToDo: Implement after builder is done
         
-        // Temporary
+        // * Temporary *
         var first = args.First();
-        if (first.Argument == "build")
+        List<FileNode> files = [];
+        foreach (var file in first.Values)
         {
-            foreach (var file in first.Values)
+            if (!File.Exists(file))
             {
-                if (!File.Exists(file))
-                {
-                    cli.Error($"File {file} not found. Terminating...");
-                    return;
-                }
+                cli.Error($"File {file} not found. Terminating...");
+                return;
             }
 
-            List<FileNode> files = [];
-            foreach (var file in first.Values)
-            {
-                var tokens = Tokenize(file);
-                // var ast = BuildAst(tokens);
-                // files.Add(ast);
-            }
+            var tk = new Tokenizer();
+            var ab = new AstBuilder();
+            
+            ab.OnError += e => cli.Error(e.Message);
+            
+            var tokens = tk.Tokenize(file);
+            var ast = ab.BuildAst(tokens);
+            files.Add(ast);
         }
     }
     

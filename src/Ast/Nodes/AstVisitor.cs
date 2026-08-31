@@ -1,4 +1,4 @@
-﻿namespace Luft.AstBuilder.Ast;
+﻿namespace Luft.Ast.Nodes;
 
 public abstract class AstVisitor<T>
 {
@@ -19,6 +19,7 @@ public abstract class AstVisitor<T>
         EnumDeclarationNode n => VisitEnum(n),
         PropertyDeclarationNode n => VisitProperty(n),
         VariableDeclarationNode n => VisitVariableDecl(n),
+        PrimaryConstructorDeclarationNode n => VisitPrimaryConstructor(n),
         ConstructorDeclarationNode n => VisitConstructor(n),
         DestructorDeclarationNode n => VisitDestructor(n),
         ModuleDeclarationNode n => VisitModule(n),
@@ -37,20 +38,22 @@ public abstract class AstVisitor<T>
         // ExpressionNodes
         IfExpressionNode n => VisitIf(n),
         ForExpressionNode n => VisitFor(n),
-        ForInExpressionNode n => VisitForIn(n),
         MatchExpressionNode n => VisitMatch(n),
         CaseExpressionNode n => VisitCase(n),
         LiteralExpressionNode n => VisitLiteral(n),
+        ArrayLiteralExpressionNode n => VisitArrayLiteral(n),
         IdentifierExpressionNode n => VisitIdentifier(n),
         MemberAccessExpressionNode n => VisitMemberAccess(n),
         CallExpressionNode n => VisitCall(n),
         IndexExpressionNode n => VisitIndex(n),
+        RangeExpressionNode n => VisitRange(n),
         BinaryExpressionNode n => VisitBinary(n),
         UnaryExpressionNode n => VisitUnary(n),
-        AssignmentExpressionNode n => VisitAssignment(n),
-        SpawnExpressionNode n => VisitSpawn(n),
+        AssignmentStatementNode n => VisitAssignment(n),
         LambdaExpressionNode n => VisitLambda(n),
         StringInterpolationExpressionNode n => VisitInterpolation(n),
+        ConcurrentExpressionNode n => VisitConcurrent(n),
+        SpawnExpressionNode n => VisitSpawn(n),
         
         _ => Default(node)
     };
@@ -73,6 +76,7 @@ public abstract class AstVisitor<T>
     protected virtual T VisitEnum(EnumDeclarationNode node) => Default(node);
     protected virtual T VisitProperty(PropertyDeclarationNode node) => Default(node);
     protected virtual T VisitVariableDecl(VariableDeclarationNode node) => Default(node);
+    protected virtual T VisitPrimaryConstructor(PrimaryConstructorDeclarationNode node) => Default(node);
     protected virtual T VisitConstructor(ConstructorDeclarationNode node) => Default(node);
     protected virtual T VisitDestructor(DestructorDeclarationNode node) => Default(node);
     protected virtual T VisitModule(ModuleDeclarationNode node) => Default(node);
@@ -91,18 +95,20 @@ public abstract class AstVisitor<T>
     // ExpressionNodes
     protected virtual T VisitIf(IfExpressionNode node) => Default(node);
     protected virtual T VisitFor(ForExpressionNode node) => Default(node);
-    protected virtual T VisitForIn(ForInExpressionNode node) => Default(node);
     protected virtual T VisitMatch(MatchExpressionNode node) => Default(node);
     protected virtual T VisitCase(CaseExpressionNode node) => Default(node);
     protected virtual T VisitLiteral(LiteralExpressionNode node) => Default(node);
+    protected virtual T VisitArrayLiteral(ArrayLiteralExpressionNode node) => Default(node);
     protected virtual T VisitIdentifier(IdentifierExpressionNode node) => Default(node);
     protected virtual T VisitMemberAccess(MemberAccessExpressionNode node) => Default(node);
     protected virtual T VisitCall(CallExpressionNode node) => Default(node);
     protected virtual T VisitIndex(IndexExpressionNode node) => Default(node);
     protected virtual T VisitBinary(BinaryExpressionNode node) => Default(node);
+    protected virtual T VisitRange(RangeExpressionNode node) => Default(node);
     protected virtual T VisitUnary(UnaryExpressionNode node) => Default(node);
-    protected virtual T VisitAssignment(AssignmentExpressionNode node) => Default(node);
-    protected virtual T VisitSpawn(SpawnExpressionNode node) => Default(node);
+    protected virtual T VisitAssignment(AssignmentStatementNode node) => Default(node);
     protected virtual T VisitLambda(LambdaExpressionNode node) => Default(node);
     protected virtual T VisitInterpolation(StringInterpolationExpressionNode node) => Default(node);
+    protected virtual T VisitConcurrent(ConcurrentExpressionNode node) => Default(node);
+    protected virtual T VisitSpawn(SpawnExpressionNode node) => Default(node);
 }

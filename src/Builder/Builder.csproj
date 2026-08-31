@@ -10,7 +10,7 @@
 
     <ItemGroup>
       <ProjectReference Include="..\Lexer\Lexer.csproj" />
-      <ProjectReference Include="..\AstBuilder\AstBuilder.csproj" />
+      <ProjectReference Include="..\Ast\Ast.csproj" />
       <ProjectReference Include="..\Utility\Utility.csproj" />
     </ItemGroup>
 

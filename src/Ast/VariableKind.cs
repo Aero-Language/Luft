@@ -1,4 +1,4 @@
-namespace Luft.AstBuilder;
+namespace Luft.Ast;
 
 public enum VariableKind
 {

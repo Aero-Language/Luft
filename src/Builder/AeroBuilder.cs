@@ -1,5 +1,4 @@
-﻿using static Luft.Lexer.Lexer;
-using static Luft.AstBuilder.Builder;
+﻿using Luft.Ast;
 
 namespace Luft.Builder;
 
@@ -14,8 +13,8 @@ public class AeroBuilder
     {
         foreach (string file in files)
         {
-            var tokens = Tokenize(file); // Turns the string of code into tokens
-            var ast = BuildAst(tokens); // Turns the tokens into a tree of nodes
+            var tokens = new Lexer.Tokenizer().Tokenize(file); // Turns the string of code into tokens
+            var ast = new AstBuilder().BuildAst(tokens); // Turns the tokens into a tree of nodes
         }
         
         return string.Empty;

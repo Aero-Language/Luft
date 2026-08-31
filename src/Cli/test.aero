@@ -5,27 +5,29 @@
 */
 
 import Core.System
-from Core.Math import Sqrt, Power 
+from Core.Math import Sqrt, Power,
 
 module AeroTests.ComprehensiveTest {
+
+    @Inline
     public enum GameState { // A collection of CONSTANT values with a name and type
-        Menu,
+        Menu = 0,
         Playing,
         Paused,
         GameOver
     }
     
-    public enum PlayerName(Name: String) { // Basically a collection of static val's, NOT constants, unchangeable, but not constant
+    public enum class PlayerName(Name: String) { // Basically a collection of static val's, NOT constants, unchangeable, but not constant
         Steve = PlayerName("steve"),
         Kevin = PlayerName("kevin15")
     }
 
-    public extension fun PlayerName.Capitalized(): String {
+    public extension fun PlayerName.Capitalized() -> String {
         return it.Name[0].Upper() + it.Name[1..]
     }
     
-    public GameState extensions {
-        public fun IsPlaying(): Bool {
+    internal extensions GameState {
+        public fun IsPlaying() -> Bool {
             it is GameState.Playing
         }
     }
@@ -35,7 +37,7 @@ module AeroTests.ComprehensiveTest {
     }
 
     public trait TUpdatable {
-        fun Update(deltaTime: Float) -> Void
+        fun Update(deltaTime: Float) -> Void 
     }
 
     public struct Vector2(var X: Float, var Y: Float) : TSerializable {
@@ -60,7 +62,7 @@ module AeroTests.ComprehensiveTest {
         }
     }
 
-    internal extension Int AsState() -> GameState {
+    internal extension fun Int.AsState() -> GameState {
         return GameState[self] // Self here is the Int instance that the extension was called on | enums can be indexed and are of type int by default
     }
     
@@ -70,17 +72,30 @@ module AeroTests.ComprehensiveTest {
 
     public class Entity : IUpdatable {
         // Property testing (Getter/Setter Nodes)
-        // This uses a hidden backing property so that self = value does not invoke the setter
+        // This uses a hidden backing variable so that 'self' does not invoke the getter/setter
         public Id: Int {
-            get { self } // This can have an optional return statement but blocks dont need to have return, it can be inferred by being the last expression in a block
-            // Getter/Setter can also use 'get => someValue' instead of 'get { somevalue }'
-            set { self = value }
+            get { self } // This can have an optional return statement but blocks dont need to have return, it can be inferred by being the last expression-statement in a block
+            set => self = value // You can also use 'get => someValue' instead of 'get { someValue }' for single line blocks
+        }
+        public Position: Vector3 { get; set; } // The same as the previous notation, but short
+        
+        public constructor Entity() {
+            val counter: Int = 10
+            val program: (params: String[]) => Void = { for (param in params) { System.Log(param) } }
+        }
+        
+        public destructor Entity() {
+            
         }
 
         // Virtual method for overriding (InheritanceMod test)
-        virtual fun Update(deltaTime: Float) -> Void { // '-> Void' is not neccesary here, it can be inferred / is the default returnType 
+        virtual fun Update(deltaTime: Float) -> Void { // '-> Void' is not necessary here, it can be inferred / is the default returnType 
             DoSomething { // if the last parameter of a function is a lambda, it can be directly accessed
-                /* Update logic */ 
+                match (game.State) {
+                    GameState.Playing {
+                        
+                    }
+                }
             } 
         }
     }
@@ -106,11 +121,11 @@ module AeroTests.ComprehensiveTest {
     }
 
     // Testing Concurrency, Generics, and Ref parameters
-    public fun FetchPlayerData<T>(ref playerId: Int) -> T? { // Ref is used to pass structs like classes where an instance is passed instead of a value
+    public fun FetchPlayerData<T>(playerId: ref Int) -> T? { // Ref is used to pass structs like classes where an instance is passed instead of a value
         val result: T?
         
         concurrent {
-            result = spawn { Core.System.NetworkRequest(playerId) } // Spawn 
+            result = spawn { System.NetworkRequest(playerId) } // Spawn 
         } // Execution stops here 
         
         return result
@@ -139,8 +154,8 @@ module AeroTests.ComprehensiveTest {
         }
 
         // While Statement Node
-        while isRunning {
-            if currentHealth <= 0 {
+        while (isRunning) {
+            if (currentHealth <= 0) {
                 isRunning = false; break // Semicolons can be used to separate two statements in a single line
             }
             currentHealth -= 1
@@ -154,23 +169,22 @@ module AeroTests.ComprehensiveTest {
             }
             currentHealth += n
         }
-        for (i: Int; i < 5; i++) { // Standard C style loop
+        for (i in ..5) {
             Core.System.Print(i)
         }
 
         // Match Statement Node
-        match state {
+        match (state) {
             GameState.Menu => currentHealth = 100,
-            GameState.Playing => {
+            GameState.Playing {
                 currentHealth -= 1
                 state = 2.AsState() // Extensions can also be used on literals
-            },
-            _ => ;; // '_ => ...' is the default case | ';;' is an empty statement
+            }
         }
 
         // Expression Statement Node (Side-effects, Operators)
         currentHealth += Int::((decLiteral * binLiteral) / 2) // Casting | grouping expressions with (x+y) ensures that they executed in wanted order
 
-        return 0 // Return Statement Node
+        return 0 // Return Statement Node | Could also be left out and written as just 0, as the last expression-statement is an automatic-return
     }
 }

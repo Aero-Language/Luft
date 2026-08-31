@@ -10,17 +10,17 @@
     </PropertyGroup>
 
     <ItemGroup>
-      <ProjectReference Include="..\..\Builder\Builder.csproj" />
       <ProjectReference Include="..\Builder\Builder.csproj" />
-      <ProjectReference Include="..\AstBuilder\AstBuilder.csproj" />
+      <ProjectReference Include="..\Ast\Ast.csproj" />
     </ItemGroup>
 
     <ItemGroup>
       <Content Include="test.aero" CopyToOutputDirectory="PreserveNewest"/>
+      <Content Include="easytest.aero" CopyToOutputDirectory="PreserveNewest"/>
     </ItemGroup>
 
     <ItemGroup>
-      <PackageReference Include="AeroLang.ACLI" Version="0.2.3" />
+      <PackageReference Include="AeroLang.ACLI" Version="0.2.4" />
     </ItemGroup>
 
 </Project>

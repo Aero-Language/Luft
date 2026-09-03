@@ -7,17 +7,42 @@ namespace Luft.Utility;
 /// </summary>
 /// <param name="items">The enumarable list of items for the list</param>
 /// <typeparam name="T">The type of items the list contains</typeparam>
-public class ValueList<T>(IEnumerable<T> items) : IReadOnlyList<T>
+public class ValueList<T> : IReadOnlyList<T>, IEquatable<ValueList<T>>
 {
-    public ValueList() : this(Enumerable.Empty<T>()) {}
+    private readonly T[] _items;
+
+    public ValueList(IEnumerable<T>? items = null)
+    {
+        _items = items?.ToArray() ?? Array.Empty<T>();
+    }
+
+    public T this[int index] => _items[index];
+
+    public int Count => _items.Length;
+
+    public IEnumerator<T> GetEnumerator() => ((IEnumerable<T>)_items).GetEnumerator();
     
+    IEnumerator IEnumerable.GetEnumerator() => GetEnumerator();
 
-    public T this[int index] => items.ElementAt(index);
-    
-    public IEnumerator GetEnumerator() => items.GetEnumerator();
-    IEnumerator<T> IEnumerable<T>.GetEnumerator() => items.GetEnumerator();
+    public bool Equals(ValueList<T>? other)
+    {
+        if (other is null) return false;
+        if (ReferenceEquals(this, other)) return true;
+        return _items.SequenceEqual(other._items);
+    }
 
-    public int Count => items.Count();
+    public override bool Equals(object? obj) => obj is ValueList<T> other && Equals(other);
 
-    public bool Equals(ValueList<T> other) => items.SequenceEqual(other);
+    public override int GetHashCode()
+    {
+        var hash = new HashCode();
+        foreach (var item in _items)
+        {
+            hash.Add(item);
+        }
+        return hash.ToHashCode();
+    }
+
+    public static bool operator ==(ValueList<T>? left, ValueList<T>? right) => Equals(left, right);
+    public static bool operator !=(ValueList<T>? left, ValueList<T>? right) => !Equals(left, right);
 }

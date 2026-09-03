@@ -4,18 +4,18 @@ using Luft.Utility;
 
 namespace Luft.Ast;
 
-public sealed class AstBuilder : SafeCollectionIterator<Token>
+public sealed class AstBuilder : SafeCollectionIterator<Token, SourceSpan>
 {
     private static readonly TokenType[] ExcludedTypes = [TokenType.Whitespace, TokenType.Comment, TokenType.Unknown];
 
     public AstBuilder()
     {
-        base.Init(t => t.Span, (t, _) => t.Type == TokenType.Eof, t => !ExcludedTypes.Contains(t.Type));
+        Init((t, _) => t.Span, (t, _) => t.Type == TokenType.Eof, t => !ExcludedTypes.Contains(t.Type));
     }
 
-    public FileNode BuildAst(List<Token> rawTokens)
+    public FileNode BuildAst(Token[] rawTokens)
     {
-        base.Start(rawTokens);
+        Start(rawTokens);
         
         return ConsumeFile();
     }
@@ -147,11 +147,7 @@ public sealed class AstBuilder : SafeCollectionIterator<Token>
         var access = accessMod ?? AccessModExtensions.FunctionDefault;
 
         if (Peek().Type is TokenType.InstanceKind && Peek().Value == "extension") Consume(); // Consume 'extension' 
-        Expect(t => 
-            t.Type is TokenType.InstanceKind 
-            && t.Value is "fun" or "constructor" or "destructor" , 
-            "Function keyword not found."
-        );
+        ExpectInstance(["fun", "constructor", "destructor"], "Function keyword not found.");
         
         var name = ConsumeIdentifier();
         var generics = ConsumeGenericDecls();
@@ -201,7 +197,7 @@ public sealed class AstBuilder : SafeCollectionIterator<Token>
         var startSpan = Peek().Span;
         var access = accessMod ?? AccessModExtensions.ExtensionDefault;
         
-        Expect(t => t.Type is TokenType.InstanceKind && t.Value == "extensions", "Expected 'extensions'");
+        ExpectInstance(["extensions"], "Expected 'extensions'");
         
         var target = ConsumeType();
         
@@ -223,7 +219,7 @@ public sealed class AstBuilder : SafeCollectionIterator<Token>
         var access = accessMod ?? AccessModExtensions.StructDeclDefault;
         
         // Make sure the struct keyword was used
-        Expect(token => token.Type is TokenType.InstanceKind && token.Value == "struct", "Expected 'struct'");
+        ExpectInstance(["struct"], "Expected 'struct'");
 
         var name = ConsumeIdentifier();
         
@@ -250,7 +246,7 @@ public sealed class AstBuilder : SafeCollectionIterator<Token>
         var access = accessMod ?? AccessModExtensions.RecordDeclDefault;
 
         // Make sure the record keyword was used
-        Expect((token) => token.Type is TokenType.InstanceKind && token.Value == "record", "Expected 'record'");
+        ExpectInstance(["record"], "Expected 'record'");
         
         var name = ConsumeIdentifier();
         
@@ -279,7 +275,7 @@ public sealed class AstBuilder : SafeCollectionIterator<Token>
         var access = accessMod ?? AccessModExtensions.AnnotationDeclDefault;
 
         // Make sure the annotation keyword was used
-        Expect((token) => token.Type is TokenType.InstanceKind && token.Value == "annotation", "Expected 'annotation'");
+        ExpectInstance(["annotation"], "Expected 'annotation'");
         
         var name = ConsumeIdentifier();
         
@@ -299,7 +295,7 @@ public sealed class AstBuilder : SafeCollectionIterator<Token>
         var access = accessMod ?? AccessModExtensions.ClassDeclDefault;
 
         // Make sure the class keyword was used
-        Expect((token) => token.Type is TokenType.InstanceKind && token.Value == "class", "Expected 'class'");
+        ExpectInstance(["class"], "Expected 'class'");
         
         var name = ConsumeIdentifier();
         var generics = ConsumeGenericDecls();
@@ -327,7 +323,7 @@ public sealed class AstBuilder : SafeCollectionIterator<Token>
         var access = accessMod ?? AccessModExtensions.TraitDeclDefault;
 
         // Make sure the class keyword was used
-        Expect((token) => token.Type is TokenType.InstanceKind && token.Value == "trait", "Expected 'trait'");
+        ExpectInstance(["trait"], "Expected 'trait'");
         
         var name = ConsumeIdentifier();
         var generics = ConsumeGenericDecls();
@@ -349,7 +345,7 @@ public sealed class AstBuilder : SafeCollectionIterator<Token>
         var access = accessMod ?? AccessModExtensions.EnumDeclDefault;
         
         // Make sure the enum keyword was used and check if it's an enum class
-        Expect((token) => token.Type is TokenType.InstanceKind && token.Value == "enum", "Expected 'enum'");
+        ExpectInstance(["enum"], "Expected 'enum'");
         bool isEnumClass = Peek().Type is TokenType.InstanceKind && Peek().Value == "class";
         if (isEnumClass) Consume(); // Consume 'class'
 
@@ -1516,6 +1512,7 @@ public sealed class AstBuilder : SafeCollectionIterator<Token>
     }
     
     // Helper methods
+    void ExpectInstance(string[] instanceNames, string errorMessage, SourceSpan? location = null) => Expect(t => t.Type is TokenType.InstanceKind && instanceNames.Contains(t.Value), errorMessage, location);
     Token ExpectType(TokenType expectedType, string errorMessage, SourceSpan? location = null) => Expect(t => t.Type == expectedType, errorMessage, location);
     protected override void Synchronize()
     {

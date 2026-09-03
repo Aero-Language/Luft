@@ -3,6 +3,7 @@
 public static class Extensions
 {
     public static T OrNew<T>(this T? element) where T : new() => element ?? new T();
+    public static string Repeat(this string str, int count) => string.Join(string.Empty, Enumerable.Repeat(str, count));
     
     
     // SourceSpan extensions

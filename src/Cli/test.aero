@@ -1,0 +1,192 @@
+/*
+    Aero Programming Language - Comprehensive Test Suite
+    Tests: Modules, Imports/Exports, Lexer Tokens, OOP (Classes, Structs, Traits), 
+    Control Flow, Generics, and Advanced Type References.
+*/
+
+import Core.System
+from Core.Math import Sqrt, Power,
+
+module AeroTests.ComprehensiveTest {
+
+    @Inline
+    public enum GameState: Byte { // A collection of CONSTANT values with a name and type
+        Menu = 0,
+        Playing,
+        Paused,
+        GameOver
+    }
+    
+    public enum class PlayerName(Name: String) { // Basically a collection of static val's, NOT constants, unchangeable, but not constant
+        Steve = PlayerName("steve"),
+        Kevin = PlayerName("kevin15")
+    }
+
+    public extension fun PlayerName.Capitalized() -> String {
+        return it.Name[0].Upper() + it.Name[1..]
+    }
+    
+    internal extensions GameState {
+        public fun IsPlaying() -> Bool {
+            it is GameState.Playing
+        }
+    }
+
+    public trait TSerializable { // A trait is basically an Interface
+        public fun Serialize() -> String // Types are PascalCase
+    }
+
+    public trait TUpdatable {
+        fun Update(deltaTime: Float) -> Void 
+    }
+
+    public struct Vector2(var X: Float, var Y: Float) : TSerializable {
+        public impl fun Serialize() -> String {
+            return $"\{ X: {X}|Y: {Y} \}"
+        }
+    }
+    
+    public class Tuple<T1: String, T2> : TSerializable {
+        public impl fun Serialize() -> String {
+            $"[{T1} and {T2::String}]"
+        }
+    }
+
+    public struct Vector3 : TSerializable {
+        var X: Float // Properties in structs are public by default
+        var Y: Float
+        var Z: Float
+
+        public impl fun Serialize() -> String {
+            return $"\{ X: {X}|Y: {Y}|Z: {Z} \}" // Backslash can always escape chars
+        }
+    }
+
+    internal extension fun Int.AsState() -> GameState {
+        return GameState[self] // Self here is the Int instance that the extension was called on | enums can be indexed and are of type int by default
+    }
+    
+    internal fun DoSomething(something: (str: String) -> Void) { // '() -> ...' are lambda functions that can be executed and return a value
+        something("example") { someString: String ->
+            System.Log(someString)
+        }
+    }
+
+    public class Entity : IUpdatable {
+        // Property testing (Getter/Setter Nodes)
+        // This uses a hidden backing variable so that 'self' does not invoke the getter/setter
+        public Id: Int {
+            get { self } // This can have an optional return statement but blocks dont need to have return, it can be inferred by being the last expression-statement in a block
+            set => self = value // You can also use 'get => someValue' instead of 'get { someValue }' for single line blocks
+        }
+        public Position: Vector3 { get; set; } // The same as the previous notation, but short
+        
+        public constructor Entity() {
+            val counter: Int = 10
+            val program: (params: String[]) -> Void = { for (param in params) { System.Log(param) } }
+        }
+        
+        destructor Entity() {
+            
+        }
+
+        // Virtual method for overriding (InheritanceMod test)
+        virtual fun Update(deltaTime: Float) -> Void { // '-> Void' is not necessary here, it can be inferred / is the default returnType 
+            DoSomething { // if the last parameter of a function is a lambda, it can be directly accessed
+                match (game.State) {
+                    GameState.Playing {
+                        
+                    }
+                }
+            } 
+        }
+    }
+
+    // Class inheritance (1 base class + N traits)
+    public class Player : Entity, ISerializable {
+        // Variable Declaration Nodes (const, let, var)
+        const MAX_HEALTH = 100 // Type can be inferred here, so ': Int' is not needed, but can be added or ': Float' would automatically infer the Int as a Float
+        private var health: Int // anything private is camelCase
+        private var name: String
+        
+        // Advanced TypeRef tests: Generics, Nullables (?), Arrays ([])
+        private var inventory: List<String?>
+        private var pathMatrix: Int[][]
+
+        // Override method
+        public impl fun Update(deltaTime: Float) { // As explained before, the default return type for functions is Void, so it not necessary to add
+            health += 1
+        }
+
+        public impl fun Serialize() -> String
+            => name // Functions can also use a singleExpression instead of a block
+    }
+
+    // Testing Concurrency, Generics, and Ref parameters
+    public fun FetchPlayerData<T>(playerId: ref Int) -> T? { // Ref is used to pass structs like classes where an instance is passed instead of a value
+        val result: T?
+        
+        concurrent {
+            result = spawn { System.NetworkRequest(playerId) } // Spawn 
+        } // Execution stops here 
+        
+        return result
+    }
+
+    public fun main(args: String[]) -> Int {
+        // Literals testing (Int, Float, Hex, Bin, Boolean, Null, Char, String)
+        val decLiteral: Int = 42
+        val hexLiteral: Int = 0xFF
+        val binLiteral: Int = 0b1010
+        val floatVal: Float = 3.14159
+        val isRunning: Bool = true
+        val charVal: Char = 'A'
+        val emptyRef: Player = null // Compiler error since 'Player' is not a nullable type 
+
+        var currentHealth = Player.MAX_HEALTH;
+        var state = GameState.Playing;
+
+        // If / Else Statement Node
+        if (currentHealth > 50) {
+            currentHealth -= 10
+        } else if (currentHealth == 50) {
+            currentHealth = 0
+        } else {
+            return -1
+        }
+
+        // While Statement Node
+        while (isRunning) {
+            if (currentHealth <= 0) {
+                isRunning = false; break // Semicolons can be used to separate two statements in a single line
+            }
+            currentHealth -= 1
+        }
+
+        // For-In Statement Node (Iteration over collections)
+        val numbers: Int[] = [1, 2, 3, 4, 5];
+        for (n in numbers) {
+            if (n % 2 == 0) {
+                continue // Breaks out of the current iteration and keeps going with the next item if there are any
+            }
+            currentHealth += n
+        }
+        for (i in ..5) {
+            Core.System.Print(i)
+        }
+
+        // Match Statement Node
+        match (state) {
+            GameState.Menu => currentHealth = 100,
+            GameState.Playing {
+                currentHealth -= 1
+                state = 2.AsState() // Extensions can also be used on literals
+            }
+        }
+
+        // Expression Statement Node (Side-effects, Operators)
+        currentHealth += Int::((decLiteral * binLiteral) / 2) // Casting | grouping expressions with (x+y) ensures that they executed in wanted order
+
+        return 0 // Return Statement Node | Could also be left out and written as just 0, as the last expression-statement is an automatic-return
+    }
+}

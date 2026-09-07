@@ -1,0 +1,21 @@
+﻿<Project Sdk="Microsoft.NET.Sdk">
+
+    <PropertyGroup>
+        <TargetFramework>net10.0</TargetFramework>
+        <RootNamespace>Luft.Builder</RootNamespace>
+        <LangVersion>latest</LangVersion>
+        <ImplicitUsings>enable</ImplicitUsings>
+        <Nullable>enable</Nullable>
+    </PropertyGroup>
+
+    <ItemGroup>
+      <ProjectReference Include="..\Lexer\Lexer.csproj" />
+      <ProjectReference Include="..\Ast\Ast.csproj" />
+      <ProjectReference Include="..\Utility\Utility.csproj" />
+    </ItemGroup>
+
+    <ItemGroup>
+      <PackageReference Include="LLVMSharp" Version="22.1.8" />
+    </ItemGroup>
+
+</Project>

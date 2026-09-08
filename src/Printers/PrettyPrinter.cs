@@ -177,7 +177,7 @@ public class PrettyPrinter(int indentAmount = 4, bool isLib = false) : PrinterBa
     protected override string VisitEnumMember(EnumMemberNode node)
     {
         var text = $"{node.Name}";
-        if (node.Value is not null) text += $" = {Visit(node.Value)}";
+        if (node.Value is not null && !isLib) text += $" = {Visit(node.Value)}";
 
         return text;
     }
@@ -213,7 +213,7 @@ public class PrettyPrinter(int indentAmount = 4, bool isLib = false) : PrinterBa
         Decr();
 
         text += $"\n{Indent("}")}";
-        if (node.Initializer is not null) text += $" = {Visit(node.Initializer)}";
+        if (node.Initializer is not null && !isLib) text += $" = {Visit(node.Initializer)}";
         
         return text;
     }

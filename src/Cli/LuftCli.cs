@@ -60,10 +60,8 @@ public static class LuftCli
             files.Add(ast);
         }
         
-        var lookup = new Lookup();
-        var checker = new Checker();
+        var lookup = new TypeLookup();
         var table = lookup.Run(files.ToArray(), []);
-        checker.Run(table);
     }
     
     static void Run(Flag[] flags, string[] values)

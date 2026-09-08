@@ -3,7 +3,7 @@ using Luft.TypeChecker.Symbols;
 
 namespace Luft.TypeChecker;
 
-public class Lookup : AstVisitor
+public class TypeLookup : AstVisitor
 {
     private TypeTable Table { get; set; } = null!;
     private ModuleSymbol CurrentModule { get; set; } = null!;

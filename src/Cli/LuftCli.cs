@@ -56,13 +56,14 @@ public static class LuftCli
             
             var tokens = tk.Tokenize(file);
             var ast = ab.BuildAst(tokens);
-            
+
             files.Add(ast);
         }
         
         var lookup = new Lookup();
         var checker = new Checker();
         var table = lookup.Run(files.ToArray(), []);
+        checker.Run(table);
     }
     
     static void Run(Flag[] flags, string[] values)

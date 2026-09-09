@@ -1,9 +1,10 @@
-using Luft.TypeChecker;
+using Luft.Utility;
 
 namespace Luft.TypeChecker.Symbols;
 
-public sealed class ModuleSymbol(string modulePath)
+public sealed class ModuleSymbol(string modulePath, SourceSpan span)
 {
     public string ModulePath { get; } = modulePath;
-    public TypeScope Scope { get; } = new();
+    public SourceSpan Span { get; } = span;
+    public TypeScope Scope { get; init; }
 }

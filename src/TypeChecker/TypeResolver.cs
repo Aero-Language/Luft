@@ -31,8 +31,8 @@ public sealed class TypeResolver : AeroThrower<SourceSpan>
             if (candidates.Count > 1)
             {
                 // Types aren't overloadable — every extra declaration sharing this name is a conflict.
-                foreach (var duplicate in candidates.Skip(1))
-                    Error($"'{name}' is already declared in this scope.", duplicate.Span);
+                foreach (var dupe in candidates.Skip(1))
+                    Error($"'{name}' is already declared in this scope.", dupe.Span);
             }
  
             foreach (var type in candidates)

@@ -9,7 +9,7 @@ namespace Luft.Utility;
 /// <typeparam name="T">The type of items the list contains</typeparam>
 public class ValueList<T> : IReadOnlyList<T>, IEquatable<ValueList<T>>
 {
-    private readonly T[] _items;
+    private T[] _items;
 
     public ValueList(IEnumerable<T> items)
     {
@@ -20,6 +20,7 @@ public class ValueList<T> : IReadOnlyList<T>, IEquatable<ValueList<T>>
         _items = Array.Empty<T>();
     }
     public static ValueList<T> Empty => new();
+    public void Add(T item) => _items = [.. _items, item];
     
     public T this[int index] => _items[index];
 

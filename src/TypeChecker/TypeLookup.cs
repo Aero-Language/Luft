@@ -27,7 +27,7 @@ public class TypeLookup : AstVisitor
     }
     protected override void VisitModule(ModuleDeclarationNode node)
     {
-        CurrentModule = Table.GetOrAddModule(node.ModulePath);
+        CurrentModule = Table.GetOrAddModule(node.ModulePath, node.Span);
         CurrentScope = CurrentModule.Scope;
         
         foreach (var decl in node.Declarations)
@@ -63,7 +63,7 @@ public class TypeLookup : AstVisitor
 
     protected override void VisitClass(ClassDeclarationNode node)
     {
-        var symbol = new ClassSymbol(node.Name, node.AccessMod, CurrentModule, node.Span);
+        var symbol = new ClassSymbol(node.Name, node.AccessMod, CurrentModule, CurrentScope, node.Span);
 
         foreach (var decl in node.Declarations)
         {
@@ -74,7 +74,7 @@ public class TypeLookup : AstVisitor
     }
     protected override void VisitStruct(StructDeclarationNode node)
     {
-        var symbol = new StructSymbol(node.Name, node.AccessMod, CurrentModule, node.Span);
+        var symbol = new StructSymbol(node.Name, node.AccessMod, CurrentModule, CurrentScope, node.Span);
 
         foreach (var decl in node.Declarations)
         {
@@ -85,7 +85,7 @@ public class TypeLookup : AstVisitor
     }
     protected override void VisitTrait(TraitDeclarationNode node)
     {
-        var symbol = new TraitSymbol(node.Name, node.AccessMod, CurrentModule, node.Span);
+        var symbol = new TraitSymbol(node.Name, node.AccessMod, CurrentModule, CurrentScope, node.Span);
 
         foreach (var decl in node.Declarations)
         {
@@ -96,7 +96,7 @@ public class TypeLookup : AstVisitor
     }
     protected override void VisitRecord(RecordDeclarationNode node)
     {
-        var symbol = new RecordSymbol(node.Name, node.AccessMod, CurrentModule, node.Span);
+        var symbol = new RecordSymbol(node.Name, node.AccessMod, CurrentModule, CurrentScope, node.Span);
 
         foreach (var decl in node.Declarations)
         {
@@ -107,7 +107,7 @@ public class TypeLookup : AstVisitor
     }
     protected override void VisitAnnotationDecl(AnnotationDeclarationNode node)
     {
-        var symbol = new AnnotationSymbol(node.Name, node.AccessMod, CurrentModule, node.Span);
+        var symbol = new AnnotationSymbol(node.Name, node.AccessMod, CurrentModule, CurrentScope, node.Span);
 
         foreach (var decl in node.Declarations)
         {
@@ -118,7 +118,7 @@ public class TypeLookup : AstVisitor
     }
     protected override void VisitEnum(EnumDeclarationNode node)
     {
-        AddType(node.Name, new EnumSymbol(node.Name, node.AccessMod, CurrentModule, node.Span));
+        AddType(node.Name, new EnumSymbol(node.Name, node.AccessMod, CurrentModule, CurrentScope, node.Span));
     }
     protected override void VisitExtension(ExtensionDeclarationNode node)
     {

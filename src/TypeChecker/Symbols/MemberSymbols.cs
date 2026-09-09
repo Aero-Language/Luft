@@ -4,7 +4,7 @@ using Luft.Utility;
 
 namespace Luft.TypeChecker.Symbols;
 
-public sealed class FunctionSymbol(string name, AccessMod access, ModuleSymbol module, FunctionDeclarationNode declaration)
+public sealed class FunctionSymbol(string name, AccessMod access, ModuleSymbol module, FunctionDeclarationNode declaration) : ISignature
 {
     public string Name { get; } = name;
     public AccessMod Access { get; } = access;
@@ -19,6 +19,9 @@ public sealed class FunctionSymbol(string name, AccessMod access, ModuleSymbol m
     public BlockExpressionNode? Body { get; init; }            // null => trait member with no implementation
 
     public AeroType? ExtensionTarget { get; init; }             // set only for `extension fun Target.Name(...)`
+    
+    
+    public SymbolSignature Signature => new(Name, GenericParameters, Parameters);
 }
 
 public sealed record ParamSymbol(string Name, AeroType Type, VariableKind VarKind, ExpressionNode? Initializer);
@@ -34,6 +37,9 @@ public sealed class PropertySymbol(string name, AccessMod access, PropertyDeclar
     public PropertyAccessorSymbol? Getter { get; init; }
     public PropertyAccessorSymbol? Setter { get; init; }
     public AeroType? ExtensionTarget { get; init; }
+    
+    
+    public SymbolSignature Signature => new(Name, [], []);
 }
 
 public sealed record PropertyAccessorSymbol(AccessMod Access, BlockExpressionNode? Body);
@@ -47,14 +53,20 @@ public sealed class FieldSymbol(string name, AccessMod access, FieldDeclarationN
     public VariableKind VarKind { get; init; }
     public AeroType Type { get; init; } = AeroType.Auto;   // Auto => infer from Initializer in pass 2
     public ExpressionNode? Initializer { get; init; }
+    
+    
+    public SymbolSignature Signature => new(Name, [], []);
 }
 
-public sealed class ConstructorSymbol(AccessMod access, ConstructorDeclarationNode declaration)
+public sealed class ConstructorSymbol(AccessMod access, ConstructorDeclarationNode declaration) : ISignature
 {
     public AccessMod Access { get; } = access;
     public ConstructorDeclarationNode Declaration { get; } = declaration;
     public ValueList<ParamSymbol> Parameters { get; init; } = ValueList<ParamSymbol>.Empty;
     public BlockExpressionNode? Body { get; init; }
+    
+    
+    public SymbolSignature Signature => new("", [], Parameters);
 }
 
 public sealed class DestructorSymbol(DestructorDeclarationNode declaration)

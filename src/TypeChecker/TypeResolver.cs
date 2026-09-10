@@ -10,121 +10,175 @@ public sealed class TypeResolver : AeroThrower<SourceSpan>
     public void Run(TypeTable typeTable)
     {
         Table = typeTable;
-        
+
         foreach (var module in Table.Modules.Values)
         {
-            CheckScope(module.Scope);
+            CheckScope(module.Scope, module);
         }
     }
-    private void CheckScope(TypeScope scope)
+
+    private void CheckType(AeroType? type, TypeScope scope, SourceSpan location)
     {
-        foreach (var fields in scope.Fields.Values) CheckFields(fields);
-        foreach (var properties in scope.Properties.Values) CheckProperties(properties);
-        foreach (var functions in scope.Functions.Values) CheckFunctions(functions);
-        foreach (var extensionProperties in scope.ExtensionProperties.Values) CheckExtensionProperties(extensionProperties);
-        foreach (var extensionFunctions in scope.ExtensionFunctions.Values) CheckExtensionFunctions(extensionFunctions);
-    }
-    private void CheckTypes(TypeScope scope)
-    {
-        foreach (var (name, candidates) in scope.Types)
+        switch (type)
         {
-            if (candidates.Count > 1)
-            {
-                // Types aren't overloadable — every extra declaration sharing this name is a conflict.
-                foreach (var dupe in candidates.Skip(1))
-                    Error($"'{name}' is already declared in this scope.", dupe.Span);
-            }
- 
-            foreach (var type in candidates)
-            {
-                switch (type)
+            case null or SpecialType: return; // Null, Auto or Error type
+            case ScalarType s:
+                if (TypeTable.PrimitiveTypes.Any(p => p.Name == s.Name)) return; // If the type is a primitive, skip it, ignore ref/nullability
+                
+                // Try to get the type in the current scope
+                if (!scope.Types.TryGetValue(s.Name, out _))
                 {
-                    case ClassSymbol c:
-                        ResolveImplementsList(c, c.Implements.Select(at => (at, c.Span)).ToValueList());
+                    // Type was not found in the current scope
+                    // Try to get the type from the parent scope
+                    if (scope.ContainingScope != null)
+                    {
+                        CheckType(type, scope.ContainingScope, location);
                         break;
-                    case StructSymbol s:
-                        ResolveImplementsList(s, s.Implements.Select(at => (at, s.Span)).ToValueList());
-                        break;
-                    case RecordSymbol r:
-                        ResolveImplementsList(r, r.Implements.Select(at => (at, r.Span)).ToValueList());
-                        break;
-                    case TraitSymbol t:
-                        ResolveImplementsList(t, t.Traits.Select(at => (at, t.Span)).ToValueList());
-                        break;
-                    case EnumSymbol e:
-                        CheckEnum(e);
-                        break;
-                    case AnnotationSymbol:
-                        break; // nothing to resolve beyond the symbol itself yet
+                    }
+                    else
+                    {
+                        // There is no parent scope, so try to get it from the file imports
+                        
+                        bool wasFound = false;
+                        if (Table.ImportsByFile.TryGetValue(location.FilePath, out var imports))
+                        {
+                            foreach (var import in imports)
+                            {
+                                if (Table.Modules.TryGetValue(import.TargetPath, out var importedModule))
+                                {
+                                    if (importedModule.Scope.Types.TryGetValue(s.Name, out _))
+                                    {
+                                        // Type found in import
+                                        wasFound = true;
+                                    }
+                                }
+                            }
+                        }
+                        
+                        if (!wasFound) Error("Type could not be found in scope. Are you missing an import?", location);
+                    }
                 }
- 
-                // Recurse into this type's own members (fields/properties/functions/nested types).
-                CheckScope(type.Scope);
-            }
+                break;
+            case ArrayType a: CheckType(a.ElementType, scope, location); break;
+            case GenericType g: CheckType(g.Definition, scope, location); foreach (var gp in g.TypeArguments) CheckType(gp, scope, location); break;
+            case GenericParameterType gp: CheckType(gp.Constraint, scope, location); break;
+            case LambdaType l: CheckType(l.ReturnType, scope, location); foreach (var p in l.Parameters) CheckType(p.Type, scope, location); break;
         }
     }
-    private void ResolveImplementsList(TypeSymbol owner, ValueList<(AeroType type, SourceSpan span)> rawEntries)
+    private void CheckScope(TypeScope scope, ModuleSymbol module)
     {
-        foreach (var raw in rawEntries)
+        foreach (var fields in scope.Fields.Values) CheckFields(fields, module);
+        foreach (var properties in scope.Properties.Values) CheckProperties(properties, module);
+        foreach (var extensionProperties in scope.ExtensionProperties.Values) CheckExtensionProperties(extensionProperties, module);
+        foreach (var functions in scope.Functions.Values) CheckFunctions(functions, module);
+        foreach (var extensionFunctions in scope.ExtensionFunctions.Values) CheckExtensionFunctions(extensionFunctions, module);
+        foreach (var typeSymbol in scope.Types.Values) CheckTypeSymbol(typeSymbol, module);
+    }
+
+    private void CheckFields(List<FieldSymbol> fields, ModuleSymbol module)
+    {
+        var dupes = fields
+            .GroupBy(p => p.Signature)
+            .Where(g => g.Count() > 1)
+            .SelectMany(g => g);
+        
+        foreach (var dupe in dupes) Error("A property with the same Signature was already declared.", dupe.Declaration.Span);
+        foreach (var field in fields)
         {
+            CheckType(field.Type, module.Scope, field.Declaration.Span);
+        }
+    }
+    private void CheckProperties(List<PropertySymbol> properties, ModuleSymbol module)
+    {
+        var dupes = properties
+            .GroupBy(p => p.Signature)
+            .Where(g => g.Count() > 1)
+            .SelectMany(g => g);
+        foreach (var dupe in dupes) Error("A property with the same Signature was already declared.", dupe.Declaration.Span);
+        
+        foreach (var property in properties.Where(p => p.ExtensionTarget is not null)) Error("Properties mustn't have a target Type.", property.Declaration.Span);
+        foreach (var property in properties) CheckType(property.Type, module.Scope, property.Declaration.Span);
+    }
+    private void CheckExtensionProperties(List<PropertySymbol> properties, ModuleSymbol module)
+    {
+        var dupes = properties
+            .GroupBy(p => p.Signature)
+            .Where(g => g.Count() > 1)
+            .SelectMany(g => g);
+        foreach (var dupe in dupes) Error("A property with the same Signature was already declared.", dupe.Declaration.Span);
+        
+        foreach (var property in properties.Where(p => p.ExtensionTarget is null)) Error("Extension properties must have a target Type.", property.Declaration.Span);
+        foreach (var property in properties)
+        {
+            CheckType(property.Type, module.Scope, property.Declaration.Span);
+            CheckType(property.ExtensionTarget, module.Scope, property.Declaration.Span);
+        }
+    }
+    private void CheckFunctions(List<FunctionSymbol> functions, ModuleSymbol module)
+    {
+        var dupes = functions
+            .GroupBy(p => p.Signature)
+            .Where(g => g.Count() > 1)
+            .SelectMany(g => g);
+        foreach (var dupe in dupes) Error("A function with the same Signature was already declared.", dupe.Declaration.Span);
+        
+        foreach (var function in functions.Where(p => p.ExtensionTarget is not null)) Error("Functions mustn't have a target Type.", function.Declaration.Span);
+        foreach (var function in functions)
+        {
+            CheckType(function.ReturnType, module.Scope, function.Declaration.Span);
+            foreach (var generic in function.GenericParameters) CheckType(generic, module.Scope, function.Declaration.Span);
+            foreach (var param in function.Parameters) CheckType(param.Type, module.Scope, function.Declaration.Span);
+        }
+    }
+    private void CheckExtensionFunctions(List<FunctionSymbol> functions, ModuleSymbol module)
+    {
+        var dupes = functions
+            .GroupBy(p => p.Signature)
+            .Where(g => g.Count() > 1)
+            .SelectMany(g => g);
+        foreach (var dupe in dupes) Error("A function with the same Signature was already declared.", dupe.Declaration.Span);
+        
+        foreach (var function in functions.Where(p => p.ExtensionTarget is null)) Error("Extension functions must have a target Type.", function.Declaration.Span);
+        foreach (var function in functions)
+        {
+            CheckType(function.ReturnType, module.Scope, function.Declaration.Span);
+            foreach (var generic in function.GenericParameters) CheckType(generic, module.Scope, function.Declaration.Span);
+            foreach (var param in function.Parameters) CheckType(param.Type, module.Scope, function.Declaration.Span);
+        }
+    }
+    private void CheckTypeSymbol(List<TypeSymbol> types, ModuleSymbol module)
+    {
+        foreach (var type in types)
+        {
+            switch (type)
+            {
+                case ClassSymbol c:
+                    foreach (var i in c.Implements) CheckType(i, module.Scope, c.Span);
+                    foreach (var g in c.GenericParameters) CheckType(g, module.Scope, c.Span);
+                    break;
+                case StructSymbol s:
+                    foreach (var i in s.Implements) CheckType(i, module.Scope, s.Span);
+                    foreach (var g in s.GenericParameters) CheckType(g, module.Scope, s.Span);
+                    break;
+                case TraitSymbol t:
+                    foreach (var trait in t.Traits) CheckType(trait, module.Scope, t.Span);
+                    foreach (var g in t.GenericParameters) CheckType(g, module.Scope, t.Span);
+                    break;
+                case RecordSymbol r:
+                    foreach (var i in r.Implements) CheckType(i, module.Scope, r.Span);
+                    foreach (var g in r.GenericParameters) CheckType(g, module.Scope, r.Span);
+                    break;
+                case AnnotationSymbol a:
+                    foreach (var g in a.GenericParameters) CheckType(g, module.Scope, a.Span);
+                    break;
+                case EnumSymbol e:
+                    foreach (var _ in e.GenericParameters) Error("Enums mustn't have generic parameters.", e.Span);
+                    foreach (var p in e.Parameters) CheckType(p.Type, module.Scope, e.Span);
+                    CheckType(e.MemberType, module.Scope, e.Span);
+                    break;
+            }
             
-        } 
-    }
-    private void CheckEnum(EnumSymbol e)
-    {
-        if (e.IsEnumClass)
-        {
-            // enum class PlayerName(Name: String) { Steve = PlayerName("steve"), ... }
-            // Each member's Value must be a call to the enum's own constructor.
-            foreach (var param in e.Parameters)
-            {
-                // TODO: ResolveTypeRef(param.Type, e.Module.Scope) — constructor param types.
-            }
- 
-            foreach (var member in e.Members)
-            {
-                if (member.Value is null)
-                    Throw(e.Span, $"Enum class member '{member.Name}' of '{e.Name}' must be initialized with a constructor call.");
- 
-                // TODO (pass 3, once expression typing exists): check member.Value is a call
-                // to e's own constructor with argument types matching e.Parameters.
-            }
+            CheckScope(type.Scope, module);
         }
-        else
-        {
-            // enum GameState: Byte { Menu = 0, ... } — MemberType defaults to Int if omitted.
-            // TODO: ResolveTypeRef(e.MemberType, e.Module.Scope) if MemberType is not null,
-            // and confirm it resolves to an integral primitive.
- 
-            foreach (var member in e.Members)
-            {
-                // TODO (pass 3): if member.Value is present, it must be a constant expression
-                // assignable to the enum's underlying MemberType.
-            }
-        }
-    }
-
-
-
-    
-    private void CheckFields(List<FieldSymbol> fields)
-    {
-        
-    }
-    private void CheckProperties(List<PropertySymbol> properties)
-    {
-        
-    }
-    private void CheckFunctions(List<FunctionSymbol> functions)
-    {
-        
-    }
-    private void CheckExtensionProperties(List<PropertySymbol> properties)
-    {
-        
-    }
-    private void CheckExtensionFunctions(List<FunctionSymbol> functions)
-    {
-        
     }
 }

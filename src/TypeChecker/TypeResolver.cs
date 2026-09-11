@@ -21,7 +21,7 @@ public sealed class TypeResolver : AeroThrower<SourceSpan>
     {
         switch (type)
         {
-            case null or SpecialType: return; // Null, Auto or Error type
+            case null or SpecialType: if (type == AeroType.Error) Error("Something went wrong in parsing!", location); break;
             case ScalarType s:
                 if (TypeTable.PrimitiveTypes.Any(p => p.Name == s.Name)) return; // If the type is a primitive, skip it, ignore ref/nullability
                 
@@ -54,7 +54,7 @@ public sealed class TypeResolver : AeroThrower<SourceSpan>
                             }
                         }
                         
-                        if (!wasFound) Error("Type could not be found in scope. Are you missing an import?", location);
+                        if (!wasFound) Error($"Type '{type.Name}' could not be found in scope. Are you missing an import?", location);
                     }
                 }
                 break;
@@ -124,8 +124,8 @@ public sealed class TypeResolver : AeroThrower<SourceSpan>
         foreach (var function in functions.Where(p => p.ExtensionTarget is not null)) Error("Functions mustn't have a target Type.", function.Declaration.Span);
         foreach (var function in functions)
         {
-            CheckType(function.ReturnType, module.Scope, function.Declaration.Span);
             foreach (var generic in function.GenericParameters) CheckType(generic, module.Scope, function.Declaration.Span);
+            CheckType(function.ReturnType, module.Scope, function.Declaration.Span);
             foreach (var param in function.Parameters) CheckType(param.Type, module.Scope, function.Declaration.Span);
         }
     }

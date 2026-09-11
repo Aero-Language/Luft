@@ -1322,7 +1322,11 @@ public sealed class AstBuilder : SafeCollectionIterator<Token, SourceSpan>
         // A scalar / generic type
         else
         {
-            if (Peek().Type is not TokenType.Identifier) return AeroType.Error;
+            if (Peek().Type is not TokenType.Identifier)
+            {
+                Error("Expected identifier", Peek().Span);
+                return AeroType.Error;
+            }
             var name = ConsumeIdentifier();
         
             // A generic type

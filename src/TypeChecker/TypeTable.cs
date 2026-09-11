@@ -23,7 +23,7 @@ public sealed class TypeTable
     public ModuleSymbol GetOrAddModule(string modulePath, SourceSpan span)
     {
         if (!Modules.TryGetValue(modulePath, out var module))
-            Modules[modulePath] = module = new ModuleSymbol(modulePath, span);
+            Modules[modulePath] = module = new ModuleSymbol(modulePath, span) { Scope = new TypeScope(null) };
         return module;
     }
 }

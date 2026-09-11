@@ -46,9 +46,17 @@ module AeroTests.ComprehensiveTest {
         }
     }
     
-    public class Tuple<T1: String, T2> : TSerializable {
+    public class Tuple<T1, T2> : TSerializable {
+        public constructor Tuple(first: T1, second:T2) {
+            First = first;
+            Second = second;
+        }
+        
+        public val First: T1;
+        public val Second: T2;
+    
         public impl fun Serialize() -> String {
-            $"[{T1} and {T2::String}]"
+            $""
         }
     }
 
@@ -72,7 +80,7 @@ module AeroTests.ComprehensiveTest {
         }
     }
 
-    public class Entity : IUpdatable {
+    public class Entity : TUpdatable {
         // Property testing (Getter/Setter Nodes)
         // This uses a hidden backing variable so that 'self' does not invoke the getter/setter
         public Id: Int {
@@ -103,7 +111,7 @@ module AeroTests.ComprehensiveTest {
     }
 
     // Class inheritance (1 base class + N traits)
-    public class Player : Entity, ISerializable {
+    public class Player : Entity, TSerializable {
         // Variable Declaration Nodes (const, let, var)
         const MAX_HEALTH = 100 // Type can be inferred here, so ': Int' is not needed, but can be added or ': Float' would automatically infer the Int as a Float
         private var health: Int // anything private is camelCase

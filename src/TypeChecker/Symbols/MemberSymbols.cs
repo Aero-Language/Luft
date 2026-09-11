@@ -11,14 +11,17 @@ public sealed class FunctionSymbol(string name, AccessMod access, ModuleSymbol m
     public ModuleSymbol Module { get; } = module;
     public FunctionDeclarationNode Declaration { get; } = declaration;
 
-    public MemberMod MemberMods { get; init; }
-    public InheritanceMod InheritanceMod { get; init; }
-    public ValueList<GenericParameterType> GenericParameters { get; init; } = ValueList<GenericParameterType>.Empty;
-    public ValueList<ParamSymbol> Parameters { get; init; } = ValueList<ParamSymbol>.Empty;
-    public AeroType ReturnType { get; init; } = AeroType.Void; // omitted -> Void, per your own resolved default
-    public BlockExpressionNode? Body { get; init; }            // null => trait member with no implementation
+    public MemberMod MemberMods => Declaration.MemberMods;
+    public InheritanceMod InheritanceMod => Declaration.InheritanceMod;
+    public ValueList<GenericParameterType> GenericParameters => Declaration.GenericParameters;
 
-    public AeroType? ExtensionTarget { get; init; }             // set only for `extension fun Target.Name(...)`
+    public ValueList<ParamSymbol> Parameters => Declaration.Parameters
+        .Select(p => new ParamSymbol(p.Name, p.Type, p.VarKind, p.Initializer)).ToValueList();
+
+    public AeroType ReturnType => Declaration.ReturnType;
+    public BlockExpressionNode? Body => Declaration.Body;
+
+    public AeroType? ExtensionTarget { get; init; } // set only for `extension fun Target.Name(...)`
     
     
     public SymbolSignature Signature => new(Name, GenericParameters, Parameters);
@@ -30,19 +33,17 @@ public sealed class PropertySymbol(string name, AccessMod access, PropertyDeclar
 {
     public string Name { get; } = name;
     public AccessMod Access { get; } = access;
-    public PropertyDeclarationNode Declaration { get; } = declaration;
+    public PropertyDeclarationNode Declaration => declaration;
 
-    public AeroType Type { get; init; } = AeroType.Error;
-    public ExpressionNode? Initializer { get; init; }
-    public PropertyAccessorSymbol? Getter { get; init; }
-    public PropertyAccessorSymbol? Setter { get; init; }
+    public AeroType Type => Declaration.Type;
+    public ExpressionNode? Initializer => Declaration.Initializer;
+    public PropertyAccessorNode? Getter => Declaration.Getter;
+    public PropertyAccessorNode? Setter => Declaration.Setter;
     public AeroType? ExtensionTarget { get; init; }
     
     
     public SymbolSignature Signature => new(Name, [], []);
 }
-
-public sealed record PropertyAccessorSymbol(AccessMod Access, BlockExpressionNode? Body);
 
 public sealed class FieldSymbol(string name, AccessMod access, FieldDeclarationNode declaration)
 {
@@ -50,9 +51,9 @@ public sealed class FieldSymbol(string name, AccessMod access, FieldDeclarationN
     public AccessMod Access { get; } = access;
     public FieldDeclarationNode Declaration { get; } = declaration;
 
-    public VariableKind VarKind { get; init; }
-    public AeroType Type { get; init; } = AeroType.Auto;   // Auto => infer from Initializer in pass 2
-    public ExpressionNode? Initializer { get; init; }
+    public VariableKind VarKind => Declaration.VarKind;
+    public AeroType Type => Declaration.Type;
+    public ExpressionNode? Initializer => Declaration.Initializer;
     
     
     public SymbolSignature Signature => new(Name, [], []);
@@ -62,8 +63,8 @@ public sealed class ConstructorSymbol(AccessMod access, ConstructorDeclarationNo
 {
     public AccessMod Access { get; } = access;
     public ConstructorDeclarationNode Declaration { get; } = declaration;
-    public ValueList<ParamSymbol> Parameters { get; init; } = ValueList<ParamSymbol>.Empty;
-    public BlockExpressionNode? Body { get; init; }
+    public ValueList<ParamSymbol> Parameters => Declaration.Parameters.Select(p => new ParamSymbol(p.Name, p.Type, p.VarKind, p.Initializer)).ToValueList();
+    public BlockExpressionNode? Body => Declaration.Body;
     
     
     public SymbolSignature Signature => new("", [], Parameters);
@@ -72,5 +73,5 @@ public sealed class ConstructorSymbol(AccessMod access, ConstructorDeclarationNo
 public sealed class DestructorSymbol(DestructorDeclarationNode declaration)
 {
     public DestructorDeclarationNode Declaration { get; } = declaration;
-    public BlockExpressionNode? Body { get; init; }
+    public BlockExpressionNode? Body => Declaration.Body;
 }

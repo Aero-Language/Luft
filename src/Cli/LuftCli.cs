@@ -31,6 +31,15 @@ public static class LuftCli
         
         
         // * Temporary *
+        var error = (Exception e) =>
+        {
+#if DEBUG
+            throw e;
+#endif
+            Cli.ErrorLine(e.Message);
+        };
+
+        
         List<FileNode> files = [];
         foreach (var file in values)
         {
@@ -39,15 +48,7 @@ public static class LuftCli
                 Cli.Error($"File {file} not found. Terminating...");
                 return;
             }
-
-            var error = (Exception e) =>
-            {
-                #if DEBUG
-                throw e;
-                #endif
-                Cli.ErrorLine(e.Message);
-            };
-
+            
             var tk = new Tokenizer();
             var ab = new AstBuilder();
 
@@ -61,7 +62,12 @@ public static class LuftCli
         }
         
         var lookup = new TypeLookup();
+        var resolver = new TypeResolver();
+        lookup.OnError += error;
+        resolver.OnError += error;
+        
         var table = lookup.Run(files.ToArray(), []);
+        resolver.Run(table);
     }
     
     static void Run(Flag[] flags, string[] values)

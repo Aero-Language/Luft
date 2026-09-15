@@ -3,7 +3,7 @@ using Luft.Utility;
 
 namespace Luft.Lexer;
 
-public sealed class Tokenizer : SafeCollectionIterator<char, int>
+public sealed class Tokenizer : SafeIterator<char>
 {
     private string FilePath { get; set; } = string.Empty;
     private int Line { get; set; } = 1;
@@ -13,7 +13,20 @@ public sealed class Tokenizer : SafeCollectionIterator<char, int>
 
     public Tokenizer()
     {
-        Init((_, i) => i, (_, tuple) => tuple.index >= tuple.max);
+        PopTask = amount =>
+        {
+            var skipped = Items[Index..(Index + amount)];
+
+            foreach (var c in skipped)
+            {
+                switch (c)
+                {
+                    case '\n': Line++; Column = 1; break;
+                    case '\r': Column = 1; break;
+                    default: Column++; break;
+                }
+            }
+        };
     }
     
     public Token[] Tokenize(string filePath)
@@ -28,7 +41,7 @@ public sealed class Tokenizer : SafeCollectionIterator<char, int>
         Tokens = new List<Token>(source.Length / 5);
         
 
-        while (ItemIndex < source.Length)
+        while (Index < source.Length)
         {
             char c = Peek();
 
@@ -45,7 +58,7 @@ public sealed class Tokenizer : SafeCollectionIterator<char, int>
         // Whitespace
         if (char.IsWhiteSpace(c))
         {
-            ConsumeWhitespace();
+            PopWhitespace();
             return;
         }
 
@@ -54,7 +67,7 @@ public sealed class Tokenizer : SafeCollectionIterator<char, int>
         {
             if (Peek(1) == '/' || Peek(1) == '*')
             {
-                ConsumeComment();
+                PopComment();
                 return;
             }
         }
@@ -62,33 +75,33 @@ public sealed class Tokenizer : SafeCollectionIterator<char, int>
         // Number Literals (Float vs Int)
         if (char.IsAsciiDigit(c) || (c == '.' && char.IsAsciiDigit(Peek(1))))
         {
-            ConsumeNumber();
+            PopNumber();
             return;
         }
 
         // Interpolated strings
         if (c is '$')
         {
-            ConsumeInterpolatedString();
+            PopInterpolatedString();
             return;
         }
         
         // String & Character Literals
         if (c is '"' or '\'')
         {
-            ConsumeStringOrChar(c);
+            PopStringOrChar(c);
             return;
         }
 
         // Identifiers & Keywords
         if (char.IsLetter(c) || c == '_')
         {
-            ConsumeIdentifierOrKeyword();
+            PopIdentifierOrKeyword();
             return;
         }
 
         // Operators & Punctuation
-        var opToken = ConsumeOperatorOrPunctuation();
+        var opToken = PopOperatorOrPunctuation();
         if (opToken.Type != TokenType.Unknown)
         {
             Tokens.Add(opToken);
@@ -98,7 +111,7 @@ public sealed class Tokenizer : SafeCollectionIterator<char, int>
         // Unknown / Fallback
         var span = new SourceSpan(FilePath, new TextLocation(Line, Column), new TextLocation(Line, Column + 1));
         Tokens.Add(new Token(TokenType.Unknown, Peek().ToString(), span));
-        Consume();
+        Pop();
     }
     
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
@@ -106,84 +119,84 @@ public sealed class Tokenizer : SafeCollectionIterator<char, int>
 
     bool IsMatch(string text)
     {
-        if (ItemIndex + text.Length > Items.Length)
+        if (Index + text.Length > Items.Length)
             return false;
 
         return Items.SequenceEqual(text);
     }
-    void ConsumeWhitespace()
+    void PopWhitespace()
     {
         var initialLoc = new TextLocation(Line, Column);
         
-        int start = ItemIndex;
+        int start = Index;
         char c = Peek();
-        while (ItemIndex < Items.Length && char.IsWhiteSpace(c))
+        while (Index < Items.Length && char.IsWhiteSpace(c))
         {
-            Consume();
+            Pop();
             c = Peek();
         }
         var span = new SourceSpan(FilePath, initialLoc, new TextLocation(Line, Column));
-        Tokens.Add(new Token(TokenType.Whitespace, PeekRange(start, ItemIndex).ToString(), span));
+        Tokens.Add(new Token(TokenType.Whitespace, PeekRange(start, Index).ToString(), span));
     }
-    void ConsumeComment()
+    void PopComment()
     {
         var initialLoc = new TextLocation(Line, Column);
         
-        int start = ItemIndex;
+        int start = Index;
         if (Peek(1) == '/') // Line comment
         {
-            Consume(2);
-            while (ItemIndex < Items.Length && Peek() != '\n' && Peek() != '\r')
+            Pop(2);
+            while (Index < Items.Length && Peek() != '\n' && Peek() != '\r')
             {
-                Consume();
+                Pop();
             }
         }
         else if (Peek(1) == '*') // Block comment
         {
-            Consume(2);
-            while (ItemIndex < Items.Length)
+            Pop(2);
+            while (Index < Items.Length)
             {
                 if (Peek() == '*' && Peek(1) == '/')
                 {
-                    Consume(2);
+                    Pop(2);
                     break;
                 }
-                Consume();
+                Pop();
             }
         }
         var span = new SourceSpan(FilePath, initialLoc, new TextLocation(Line, Column));
-        Tokens.Add(new Token(TokenType.Comment, PeekRange(start, ItemIndex).ToString(), span));
+        Tokens.Add(new Token(TokenType.Comment, PeekRange(start, Index).ToString(), span));
     }
-    void ConsumeNumber()
+    void PopNumber()
     {
         var initialLoc = new TextLocation(Line, Column);
         
-        int start = ItemIndex;
+        int start = Index;
         bool isFloat = false;
         bool isHex = Peek() is '0' && Peek(1) is 'x';
         bool isBin = Peek() is '0' && Peek(1) is 'b';
-        if (isHex || isBin) Consume(2);
+        if (isHex || isBin) Pop(2);
 
-        while (ItemIndex < Items.Length)
+        while (Index < Items.Length)
         {
             char current = Peek();
             
             if (char.IsAsciiDigit(current) && !isBin && !isHex) // handle int exclusively
             {
-                Consume();
+                Pop();
             }
             else if (current == '.' && !isFloat && char.IsAsciiDigit(Peek(1))) // handle float
             {
                 isFloat = true;
-                Consume();
+                Pop();
             }
             else if (isHex && Extensions.HexChars.Contains(Peek())) // handle hexadecimal
             {
-                Consume();
+                Pop();
             }
             else if (isBin && Extensions.BinChars.Contains(Peek())) // handle binary
             {
-                Consume();
+                Pop();
             }
             else
             {
@@ -193,77 +206,77 @@ public sealed class Tokenizer : SafeCollectionIterator<char, int>
 
         TokenType type = isFloat ? TokenType.FloatLiteral : TokenType.IntLiteral;
         var span = new SourceSpan(FilePath, initialLoc, new TextLocation(Line, Column));
-        Tokens.Add(new Token(type, PeekRange(start, ItemIndex).ToString(), span));
+        Tokens.Add(new Token(type, PeekRange(start, Index).ToString(), span));
     }
-    void ConsumeInterpolatedString()
+    void PopInterpolatedString()
     {
         var startLoc = new TextLocation(Line, Column);
 
         // Emit InterpolationStart for $"
         Tokens.Add(new Token(TokenType.InterpolationStart, "$\"", new SourceSpan(FilePath, startLoc, new TextLocation(Line, Column + 2))));
-        Consume(2); // Consume $"
+        Pop(2); // Pop $"
 
-        int start = ItemIndex;
+        int start = Index;
         var currentLoc = new TextLocation(Line, Column);
 
-        while (ItemIndex < Items.Length)
+        while (Index < Items.Length)
         {
             char c = Peek();
 
             if (c == '{')
             {
                 // Emit literal string preceding the interpolated expression (if any)
-                if (ItemIndex > start)
+                if (Index > start)
                 {
                     var span = new SourceSpan(FilePath, currentLoc, new TextLocation(Line, Column));
-                    Tokens.Add(new Token(TokenType.StringLiteral, new string(Items[start..ItemIndex]), span));
+                    Tokens.Add(new Token(TokenType.StringLiteral, new string(Items[start..Index]), span));
                 }
 
-                Consume(); // Consume '{'
+                Pop(); // Pop '{'
                 
                 // Lex Tokens inside expression until closing brace
-                while (ItemIndex < Items.Length && Peek() != '}')
+                while (Index < Items.Length && Peek() != '}')
                 {
                     LexPass(Peek());
                 }
 
-                if (ItemIndex < Items.Length && Peek() == '}')
+                if (Index < Items.Length && Peek() == '}')
                 {
-                    Consume(); // Consume '}'
+                    Pop(); // Pop '}'
                 }
 
                 currentLoc = new TextLocation(Line, Column);
-                start = ItemIndex;
+                start = Index;
             }
             else if (c == '\\')
             {
-                Consume(); // Consume backslash
-                if (ItemIndex < Items.Length)
+                Pop(); // Pop backslash
+                if (Index < Items.Length)
                 {
-                    Consume(); // Consume escaped character
+                    Pop(); // Pop escaped character
                 }
             }
             else if (c == '"')
             {
                 // Emit final literal string segment before closing quote (if non-empty)
-                if (ItemIndex > start)
+                if (Index > start)
                 {
                     var span = new SourceSpan(FilePath, currentLoc, new TextLocation(Line, Column));
-                    Tokens.Add(new Token(TokenType.StringLiteral, new string(Items[start..ItemIndex]), span));
+                    Tokens.Add(new Token(TokenType.StringLiteral, new string(Items[start..Index]), span));
                 }
 
                 var endLoc = new TextLocation(Line, Column);
-                Consume(); // Consume closing '"'
+                Pop(); // Pop closing '"'
                 Tokens.Add(new Token(TokenType.InterpolationEnd, "\"", new SourceSpan(FilePath, endLoc, new TextLocation(Line, Column))));
                 break;
             }
             else
             {
-                Consume();
+                Pop();
             }
         }
     }
-    void ConsumeStringOrChar(char quoteChar)
+    void PopStringOrChar(char quoteChar)
     {
         var initialLoc = new TextLocation(Line, Column);
 
@@ -271,19 +284,19 @@ public sealed class Tokenizer : SafeCollectionIterator<char, int>
         bool isMultiline = quoteChar == '"' && Peek(1) == '"' && Peek(2) == '"';
         int quoteLength = isMultiline ? 3 : 1;
 
-        // Consume the opening quote(s)
-        Consume(quoteLength);
-        int start = ItemIndex;
+        // Pop the opening quote(s)
+        Pop(quoteLength);
+        int start = Index;
 
-        while (ItemIndex < Items.Length)
+        while (Index < Items.Length)
         {
             // 1. Check for string/char termination
             if (isMultiline)
             {
                 if (IsMatch("\"\"\""))
                 {
-                    string multilineValue = new string(Items[start..ItemIndex]);
-                    Consume(3); // Consume closing """
+                    string multilineValue = new string(Items[start..Index]);
+                    Pop(3); // Pop closing """
                     var span = new SourceSpan(FilePath, initialLoc, new TextLocation(Line, Column));
                     Tokens.Add(new Token(TokenType.StringLiteral, multilineValue, span));
                     return;
@@ -291,9 +304,9 @@ public sealed class Tokenizer : SafeCollectionIterator<char, int>
             }
             else if (Peek() == quoteChar)
             {
-                string singleLineValue = new string(Items[start..ItemIndex]);
+                string singleLineValue = new string(Items[start..Index]);
                 
-                Consume(); // Consume closing quote
+                Pop(); // Pop closing quote
                 
                 var span = new SourceSpan(FilePath, initialLoc, new TextLocation(Line, Column));
                 TokenType type = quoteChar == '\'' ? TokenType.CharLiteral : TokenType.StringLiteral;
@@ -304,41 +317,41 @@ public sealed class Tokenizer : SafeCollectionIterator<char, int>
             // 2. Handle escape sequences
             if (Peek() == '\\')
             {
-                Consume(); // Consume '\\'
-                if (ItemIndex < Items.Length)
+                Pop(); // Pop '\\'
+                if (Index < Items.Length)
                 {
-                    Consume(); // Consume escaped character safely
+                    Pop(); // Pop escaped character safely
                 }
             }
             else
             {
-                Consume(); // Advance past regular characters (and newlines)
+                Pop(); // Advance past regular characters (and newlines)
             }
         }
 
         // Fallback for unterminated literals at EOF
         var errSpan = new SourceSpan(FilePath, initialLoc, new TextLocation(Line, Column));
         TokenType errType = quoteChar == '\'' ? TokenType.CharLiteral : TokenType.StringLiteral;
-        Tokens.Add(new Token(errType, new string(Items[start..ItemIndex]), errSpan));
+        Tokens.Add(new Token(errType, new string(Items[start..Index]), errSpan));
     }
-    void ConsumeIdentifierOrKeyword()
+    void PopIdentifierOrKeyword()
     {
         var initialLoc = new TextLocation(Line, Column);
         
-        int start = ItemIndex;
-        while (ItemIndex < Items.Length && (char.IsLetterOrDigit(Peek()) || Peek() == '_'))
+        int start = Index;
+        while (Index < Items.Length && (char.IsLetterOrDigit(Peek()) || Peek() == '_'))
         {
-            Consume();
+            Pop();
         }
 
-        ReadOnlySpan<char> text = Items[start..ItemIndex];
+        ReadOnlySpan<char> text = Items[start..Index];
         TokenType type = MatchKeyword(text);
 
         var span = new SourceSpan(FilePath, initialLoc, new TextLocation(Line, Column));
-        Tokens.Add(new Token(type, new string(Items[start..ItemIndex]), span));
+        Tokens.Add(new Token(type, new string(Items[start..Index]), span));
     }
 
-    Token ConsumeOperatorOrPunctuation()
+    Token PopOperatorOrPunctuation()
     {
         var initialLoc = new TextLocation(Line, Column);
 
@@ -358,7 +371,7 @@ public sealed class Tokenizer : SafeCollectionIterator<char, int>
 
         if (tripleOp != TokenType.Unknown)
         {
-            Consume(3);
+            Pop(3);
             return new Token(tripleOp, string.Join("", c, next, next2), span);
         }
 
@@ -392,7 +405,7 @@ public sealed class Tokenizer : SafeCollectionIterator<char, int>
 
         if (doubleOp != TokenType.Unknown)
         {
-            Consume(2);
+            Pop(2);
             span = new SourceSpan(FilePath, initialLoc, new TextLocation(Line, Column));
             return new Token(doubleOp, string.Join("", c, next), span);
         }
@@ -432,7 +445,7 @@ public sealed class Tokenizer : SafeCollectionIterator<char, int>
 
         if (singleOp != TokenType.Unknown)
         {
-            Consume();
+            Pop();
             span = new SourceSpan(FilePath, initialLoc, new TextLocation(Line, Column));
             return new Token(singleOp, c.ToString(), span);
         }

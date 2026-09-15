@@ -7,7 +7,11 @@ public abstract record AstNode(SourceSpan Span);
 public abstract record DeclarationNode(SourceSpan Span) : AstNode(Span);
 public record ErrorDeclarationNode(SourceSpan Span) : DeclarationNode(Span);
 public abstract record StatementNode(SourceSpan Span) : AstNode(Span);
-public abstract record ExpressionNode(SourceSpan Span) : AstNode(Span);
+
+public abstract record ExpressionNode(SourceSpan Span, AeroType Type) : AstNode(Span)
+{
+    public AeroType Type { get; set; } = Type;
+}
 
 public record FileNode(ModuleDeclarationNode[] Modules, ImportStatementNode[] Imports, SourceSpan Span) : AstNode(Span);
 

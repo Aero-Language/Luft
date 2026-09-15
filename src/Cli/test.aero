@@ -48,7 +48,9 @@ module AeroTests.ComprehensiveTest {
     
     public class Tuple<T1, T2> : TSerializable {
         public constructor Tuple(first: T1, second:T2) {
-            First = first;
+            First = first; 
+            // Semicolons can always be added optionally after statements,
+            // this also allows putting multiple statements on the same line
             Second = second;
         }
         
@@ -107,6 +109,21 @@ module AeroTests.ComprehensiveTest {
                     }
                 }
             } 
+        }
+    }
+    
+    public class List<T> {
+        public Items: T[] { get; set; }
+    
+        public constructor List(elements: T[]) {
+            Items = elements
+        }
+        
+        public fun Add(item: T) {
+            Items = Items.Append(item)
+        }
+        public fun Remove(index: Int) {
+            Items = Items[..(Index - 1)] + Items[(Index + 1)..] // Adds the first and second half of the array together and skips the index
         }
     }
 

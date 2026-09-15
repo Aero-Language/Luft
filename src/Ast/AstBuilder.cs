@@ -4,25 +4,25 @@ using Luft.Utility;
 
 namespace Luft.Ast;
 
-public sealed class AstBuilder : SafeCollectionIterator<Token, SourceSpan>
+public sealed class AstBuilder : SafeIterator<Token>
 {
     private static readonly TokenType[] ExcludedTypes = [TokenType.Whitespace, TokenType.Comment, TokenType.Unknown];
 
     public AstBuilder()
     {
-        Init((t, _) => t.Span, (t, _) => t.Type == TokenType.Eof, t => !ExcludedTypes.Contains(t.Type));
+        Denied = token => ExcludedTypes.Contains(token.Type);
     }
 
     public FileNode BuildAst(Token[] rawTokens)
     {
         Start(rawTokens);
         
-        return ConsumeFile();
+        return PopFile();
     }
     
     
     // Special
-    FileNode ConsumeFile()
+    FileNode PopFile()
     {
         var imports = new List<ImportStatementNode>();
         var modules = new List<ModuleDeclarationNode>();
@@ -32,15 +32,15 @@ public sealed class AstBuilder : SafeCollectionIterator<Token, SourceSpan>
         {
             if (Peek().Type is TokenType.ImportKeyword or TokenType.FromKeyword)
             {
-                imports.Add(ConsumeImport());
+                imports.Add(PopImport());
             }
             else if (Peek().Type is TokenType.ModuleKeyword)
             {
-                modules.Add(ConsumeModule());
+                modules.Add(PopModule());
             }
             else
             {
-                globals.Add(ConsumeDecl());
+                globals.Add(PopDecl());
             }
         }
         
@@ -48,7 +48,7 @@ public sealed class AstBuilder : SafeCollectionIterator<Token, SourceSpan>
         
         return new FileNode(modules.ToArray(), imports.ToArray(), Peek().Span);
     }
-    AnnotationStatementNode ConsumeAnnotation()
+    AnnotationStatementNode PopAnnotation()
     {
         var startSpan = Peek().Span;
         
@@ -60,14 +60,14 @@ public sealed class AstBuilder : SafeCollectionIterator<Token, SourceSpan>
         var parameters = new List<ExpressionNode>();
         if (Peek().Type is TokenType.ParenthesisOpen)
         {
-            Consume(); // Consume '('
+            Pop(); // Pop '('
             while (Peek().Type is not TokenType.ParenthesisClose and not TokenType.Eof)
             {
-                parameters.Add(ConsumeExpression());
+                parameters.Add(PopExpression());
                 
                 if (Peek().Type is TokenType.Comma)
                 {
-                    Consume(); // Consume ','
+                    Pop(); // Pop ','
                     
                     // Allow trailing comma: @Foo(a, b,)
                     if (Peek().Type is TokenType.ParenthesisClose)
@@ -78,7 +78,7 @@ public sealed class AstBuilder : SafeCollectionIterator<Token, SourceSpan>
                 else if (Peek().Type is not TokenType.ParenthesisClose)
                 {
                     Error("Expected ',' or ')' after parameter.", Peek().Span);
-                    Consume();
+                    Pop();
                     break; 
                 }
             }
@@ -91,131 +91,131 @@ public sealed class AstBuilder : SafeCollectionIterator<Token, SourceSpan>
     
     
     // Declarations
-    DeclarationNode ConsumeDecl()
+    DeclarationNode PopDecl()
     {
-        var annotations = ConsumeAnnotations();
-        var accessMod = ConsumeAccessMod();
-        var memberMod = ConsumeMemberMod();
-        var inheritance = ConsumeInheritance();
+        var annotations = PopAnnotations();
+        var accessMod = PopAccessMod();
+        var memberMod = PopMemberMod();
+        var inheritance = PopInheritance();
         
         return Peek().Value switch
         {
-            "struct" => ConsumeStruct(annotations, accessMod, memberMod, inheritance),
-            "record" => ConsumeRecord(annotations, accessMod, memberMod, inheritance),
-            "class" => ConsumeClass(annotations, accessMod, memberMod, inheritance),
-            "trait" => ConsumeTrait(annotations, accessMod, inheritance),
-            "enum" => ConsumeEnum(annotations, accessMod),
-            "annotation" => ConsumeAnnotationDecl(annotations, accessMod, memberMod),
-            "fun" => ConsumeFunction(annotations, accessMod, memberMod, inheritance),
-            "extension" => ConsumeExtension(annotations, accessMod, memberMod, inheritance),
-            "extensions" => ConsumeExtensionBlock(accessMod),
-            "constructor" => ConsumeConstructor(annotations, accessMod),
-            "destructor" => ConsumeDestructor(annotations),
-            _ => Peek().Type is TokenType.VariableKind ? ConsumeVariableDecl(annotations, accessMod, memberMod, inheritance) : ConsumeProperty(annotations, accessMod, memberMod, inheritance)
+            "struct" => PopStruct(annotations, accessMod, memberMod, inheritance),
+            "record" => PopRecord(annotations, accessMod, memberMod, inheritance),
+            "class" => PopClass(annotations, accessMod, memberMod, inheritance),
+            "trait" => PopTrait(annotations, accessMod, inheritance),
+            "enum" => PopEnum(annotations, accessMod),
+            "annotation" => PopAnnotationDecl(annotations, accessMod, memberMod),
+            "fun" => PopFunction(annotations, accessMod, memberMod, inheritance),
+            "extension" => PopExtension(annotations, accessMod, memberMod, inheritance),
+            "extensions" => PopExtensionBlock(accessMod),
+            "constructor" => PopConstructor(annotations, accessMod),
+            "destructor" => PopDestructor(annotations),
+            _ => Peek().Type is TokenType.VariableKind ? PopVariableDecl(annotations, accessMod, memberMod, inheritance) : PopProperty(annotations, accessMod, memberMod, inheritance)
         };
     }
-    ModuleDeclarationNode ConsumeModule()
+    ModuleDeclarationNode PopModule()
     {
         ExpectType(TokenType.ModuleKeyword, "Use the 'module' keyword to declare a module.");
-        var identifier= ConsumeIdentifier();
+        var identifier= PopIdentifier();
         
         var decls = new List<DeclarationNode>();
         if (Peek().Type is TokenType.BracketOpen)
         {
-            Consume(); // Consume '{'
+            Pop(); // Pop '{'
             
             while (Peek().Type is not TokenType.BracketClose and not TokenType.Eof)
             {
-                decls.Add(ConsumeDecl());
+                decls.Add(PopDecl());
             }
 
             ExpectType(TokenType.BracketClose, "Expected '}'");
         }
         else
         {
-            ConsumeStatementTerminator();
+            PopStatementTerminator();
             
             while (Peek().Type is not TokenType.Eof)
             {
-                decls.Add(ConsumeDecl());
+                decls.Add(PopDecl());
             }
         }
         
         return new ModuleDeclarationNode(identifier, decls.ToArray(), Peek().Span);
     }
-    FunctionDeclarationNode ConsumeFunction(ValueList<AnnotationStatementNode>? annotations, AccessMod? accessMod, MemberMod memberMod, InheritanceMod inheritance)
+    FunctionDeclarationNode PopFunction(ValueList<AnnotationStatementNode>? annotations, AccessMod? accessMod, MemberMod memberMod, InheritanceMod inheritance)
     {
         var startSpan = Peek().Span;
         var access = accessMod ?? AccessModExtensions.FunctionDefault;
 
-        if (Peek().Type is TokenType.InstanceKind && Peek().Value == "extension") Consume(); // Consume 'extension' 
+        if (Peek().Type is TokenType.InstanceKind && Peek().Value == "extension") Pop(); // Pop 'extension' 
         ExpectInstance(["fun"], "Expected 'fun' keyword");
         
-        var name = ConsumeIdentifier();
-        var generics = ConsumeGenericDecls();
-        var parameters = ConsumeParameterDecl();
+        var name = PopIdentifier();
+        var generics = PopGenericDecls();
+        var parameters = PopParameterDecl();
 
         var returning = AeroType.Void;
         if (Peek().Type is TokenType.ArrowSymbol)
         {
-            Consume(); // Consume '->'
-            returning = ConsumeType();
+            Pop(); // Pop '->'
+            returning = PopType();
         }
 
         BlockExpressionNode? body = null;
         if (Peek().Type is TokenType.BracketOpen or TokenType.EqualArrow)
         {
-            body = ConsumeBlock();
+            body = PopBlock();
         }
         else if (IsStatementTerminator())
         {
-            ConsumeStatementTerminator();
+            PopStatementTerminator();
         }
         
         return new FunctionDeclarationNode(annotations.OrNew(), access, inheritance, memberMod, returning, name, generics.ToValueList(), parameters, body, startSpan.To(Peek().Span.End));
     }
-    ExtensionDeclarationNode ConsumeExtension(ValueList<AnnotationStatementNode>? annotations, AccessMod? accessMod, MemberMod memberMod, InheritanceMod inheritance)
+    ExtensionDeclarationNode PopExtension(ValueList<AnnotationStatementNode>? annotations, AccessMod? accessMod, MemberMod memberMod, InheritanceMod inheritance)
     {
         string targetType;
         DeclarationNode decl;
         var kind = Peek(1);
         if (kind.Type is TokenType.InstanceKind && kind.Value == "fun") // Peek() is 'extension', so check the next one
         {
-            var node = ConsumeFunction(annotations, accessMod, memberMod, inheritance);
+            var node = PopFunction(annotations, accessMod, memberMod, inheritance);
             decl = node;
             targetType = node.Name.FirstIdentifier();
         }
         else
         {
-            var node = ConsumeProperty(annotations, accessMod, memberMod, inheritance);
+            var node = PopProperty(annotations, accessMod, memberMod, inheritance);
             decl = node;
             targetType = node.Name.FirstIdentifier();
         }
         
         return new ExtensionDeclarationNode(decl, targetType.ToType(), decl.Span);
     }
-    ExtensionBlockDeclarationNode ConsumeExtensionBlock(AccessMod? accessMod)
+    ExtensionBlockDeclarationNode PopExtensionBlock(AccessMod? accessMod)
     {
         var startSpan = Peek().Span;
         var access = accessMod ?? AccessModExtensions.ExtensionDefault;
         
         ExpectInstance(["extensions"], "Expected 'extensions'");
         
-        var target = ConsumeType();
+        var target = PopType();
         
         ExpectType(TokenType.BracketOpen, "Expected '{'");
         List<ExtensionDeclarationNode> extensions = [];
         while (Peek().Type is not TokenType.BracketClose and not TokenType.Eof)
         {
             var declStart = Peek().Span;
-            var decl = ConsumeDecl();
+            var decl = PopDecl();
             extensions.Add(new ExtensionDeclarationNode(decl, target, declStart.To(Peek().Span)));
         }
         ExpectType(TokenType.BracketClose, "Expected '}'");
         
         return new ExtensionBlockDeclarationNode(access, target, extensions.ToValueList(), startSpan.To(Peek().Span));
     }
-    StructDeclarationNode ConsumeStruct(ValueList<AnnotationStatementNode>? annotations, AccessMod? accessMod, MemberMod memberMod, InheritanceMod inheritance)
+    StructDeclarationNode PopStruct(ValueList<AnnotationStatementNode>? annotations, AccessMod? accessMod, MemberMod memberMod, InheritanceMod inheritance)
     {
         var startSpan = Peek().Span;
         var access = accessMod ?? AccessModExtensions.StructDeclDefault;
@@ -223,26 +223,26 @@ public sealed class AstBuilder : SafeCollectionIterator<Token, SourceSpan>
         // Make sure the struct keyword was used
         ExpectInstance(["struct"], "Expected 'struct'");
 
-        var name = ConsumeIdentifier();
+        var name = PopIdentifier();
         
         List<DeclarationNode> decls = [];
         if (Peek().Type is TokenType.ParenthesisOpen)
         {
-            decls.Add(ConsumePrimaryConstructor());
+            decls.Add(PopPrimaryConstructor());
         }
 
-        var implementations = ConsumeImplementations();
+        var implementations = PopImplementations();
 
         ExpectType(TokenType.BracketOpen, "Expect '{'");
         while (Peek().Type is not TokenType.BracketClose and not TokenType.Eof)
         {
-            decls.Add(ConsumeDecl());
+            decls.Add(PopDecl());
         }
         ExpectType(TokenType.BracketClose, "Expect '}'");
         
         return new StructDeclarationNode(annotations.OrNew(), access, inheritance, memberMod, name, decls.ToValueList(), implementations, startSpan.To(Peek().Span));
     }
-    RecordDeclarationNode ConsumeRecord(ValueList<AnnotationStatementNode>? annotations, AccessMod? accessMod, MemberMod memberMod, InheritanceMod inheritance)
+    RecordDeclarationNode PopRecord(ValueList<AnnotationStatementNode>? annotations, AccessMod? accessMod, MemberMod memberMod, InheritanceMod inheritance)
     {
         var startSpan = Peek().Span;
         var access = accessMod ?? AccessModExtensions.RecordDeclDefault;
@@ -250,28 +250,28 @@ public sealed class AstBuilder : SafeCollectionIterator<Token, SourceSpan>
         // Make sure the record keyword was used
         ExpectInstance(["record"], "Expected 'record'");
         
-        var name = ConsumeIdentifier();
+        var name = PopIdentifier();
         
-        var generics = ConsumeGenericDecls();
+        var generics = PopGenericDecls();
         
         List<DeclarationNode> decls = [];
         if (Peek().Type is TokenType.ParenthesisOpen)
         {
-            decls.Add(ConsumePrimaryConstructor());
+            decls.Add(PopPrimaryConstructor());
         }
 
-        var implementations = ConsumeImplementations();
+        var implementations = PopImplementations();
         
         ExpectType(TokenType.BracketOpen, "Expected '{'");
         while (Peek().Type is not TokenType.BracketClose and not TokenType.Eof)
         {
-            decls.Add(ConsumeDecl());
+            decls.Add(PopDecl());
         }
         ExpectType(TokenType.BracketClose, "Expected '}'");
         
         return new RecordDeclarationNode(annotations.OrNew(), access, inheritance, memberMod, name, generics, decls.ToValueList(), implementations, startSpan.To(Peek().Span));
     }
-    AnnotationDeclarationNode ConsumeAnnotationDecl(ValueList<AnnotationStatementNode>? annotations, AccessMod? accessMod, MemberMod memberMod)
+    AnnotationDeclarationNode PopAnnotationDecl(ValueList<AnnotationStatementNode>? annotations, AccessMod? accessMod, MemberMod memberMod)
     {
         var startSpan = Peek().Span;
         var access = accessMod ?? AccessModExtensions.AnnotationDeclDefault;
@@ -279,19 +279,19 @@ public sealed class AstBuilder : SafeCollectionIterator<Token, SourceSpan>
         // Make sure the annotation keyword was used
         ExpectInstance(["annotation"], "Expected 'annotation'");
         
-        var name = ConsumeIdentifier();
+        var name = PopIdentifier();
         
-        var generics = ConsumeGenericDecls();
+        var generics = PopGenericDecls();
         
         List<DeclarationNode> decls = [];
         if (Peek().Type is TokenType.ParenthesisOpen)
         {
-            decls.Add(ConsumePrimaryConstructor());
+            decls.Add(PopPrimaryConstructor());
         }
         
         return new AnnotationDeclarationNode(annotations.OrNew(), access, memberMod, name, generics, decls.ToValueList(), startSpan.To(Peek().Span));
     }
-    ClassDeclarationNode ConsumeClass(ValueList<AnnotationStatementNode>? annotations, AccessMod? accessMod, MemberMod memberMod, InheritanceMod inheritance)
+    ClassDeclarationNode PopClass(ValueList<AnnotationStatementNode>? annotations, AccessMod? accessMod, MemberMod memberMod, InheritanceMod inheritance)
     {
         var startSpan = Peek().Span;
         var access = accessMod ?? AccessModExtensions.ClassDeclDefault;
@@ -299,27 +299,27 @@ public sealed class AstBuilder : SafeCollectionIterator<Token, SourceSpan>
         // Make sure the class keyword was used
         ExpectInstance(["class"], "Expected 'class'");
         
-        var name = ConsumeIdentifier();
-        var generics = ConsumeGenericDecls();
+        var name = PopIdentifier();
+        var generics = PopGenericDecls();
         
         List<DeclarationNode> decls = [];
         if (Peek().Type is TokenType.ParenthesisOpen)
         {
-            decls.AddRange(ConsumePrimaryConstructor());
+            decls.AddRange(PopPrimaryConstructor());
         }
 
-        var implementations = ConsumeImplementations();
+        var implementations = PopImplementations();
         
         ExpectType(TokenType.BracketOpen, "Expect '{'");
         while (Peek().Type is not TokenType.BracketClose and not TokenType.Eof)
         {
-            decls.Add(ConsumeDecl());
+            decls.Add(PopDecl());
         }
         ExpectType(TokenType.BracketClose, "Expect '}'");
         
         return new ClassDeclarationNode(annotations.OrNew(), access, inheritance, memberMod, name, generics, decls.ToValueList(), implementations, startSpan.To(Peek().Span));
     }
-    TraitDeclarationNode ConsumeTrait(ValueList<AnnotationStatementNode>? annotations, AccessMod? accessMod, InheritanceMod inheritance)
+    TraitDeclarationNode PopTrait(ValueList<AnnotationStatementNode>? annotations, AccessMod? accessMod, InheritanceMod inheritance)
     {
         var startSpan = Peek().Span;
         var access = accessMod ?? AccessModExtensions.TraitDeclDefault;
@@ -327,21 +327,21 @@ public sealed class AstBuilder : SafeCollectionIterator<Token, SourceSpan>
         // Make sure the class keyword was used
         ExpectInstance(["trait"], "Expected 'trait'");
         
-        var name = ConsumeIdentifier();
-        var generics = ConsumeGenericDecls();
-        var implementations = ConsumeImplementations();
+        var name = PopIdentifier();
+        var generics = PopGenericDecls();
+        var implementations = PopImplementations();
 
         ExpectType(TokenType.BracketOpen, "Expected '{'");
         List<DeclarationNode> decls = [];
         while (Peek().Type is not TokenType.BracketClose and not TokenType.Eof)
         {
-            decls.Add(ConsumeDecl());
+            decls.Add(PopDecl());
         }
         ExpectType(TokenType.BracketClose, "Expected '}'");
         
         return new TraitDeclarationNode(annotations.OrNew(), access, inheritance, name, generics, decls.ToValueList(), implementations, startSpan.To(Peek().Span));
     }
-    EnumDeclarationNode ConsumeEnum(ValueList<AnnotationStatementNode>? annotations, AccessMod? accessMod)
+    EnumDeclarationNode PopEnum(ValueList<AnnotationStatementNode>? annotations, AccessMod? accessMod)
     {
         var startSpan = Peek().Span;
         var access = accessMod ?? AccessModExtensions.EnumDeclDefault;
@@ -349,21 +349,21 @@ public sealed class AstBuilder : SafeCollectionIterator<Token, SourceSpan>
         // Make sure the enum keyword was used and check if it's an enum class
         ExpectInstance(["enum"], "Expected 'enum'");
         bool isEnumClass = Peek().Type is TokenType.InstanceKind && Peek().Value == "class";
-        if (isEnumClass) Consume(); // Consume 'class'
+        if (isEnumClass) Pop(); // Pop 'class'
 
-        var name = ConsumeIdentifier();
+        var name = PopIdentifier();
 
         ValueList<ParamNode>? memberValues = null;
         if (Peek().Type is TokenType.ParenthesisOpen)
         {
-            memberValues = ConsumeParameterDecl();
+            memberValues = PopParameterDecl();
         }
         
         AeroType? memberType = null;
         if (Peek().Type is TokenType.Colon)
         {
-            Consume(); // Consume ':'
-            memberType = ConsumeType();
+            Pop(); // Pop ':'
+            memberType = PopType();
         }
 
         ExpectType(TokenType.BracketOpen, "Expected '{'");
@@ -372,33 +372,33 @@ public sealed class AstBuilder : SafeCollectionIterator<Token, SourceSpan>
         {
             var memberStartSpan = Peek().Span;
             
-            var memberName = ConsumeIdentifier();
+            var memberName = PopIdentifier();
             ExpressionNode? memberValue = null;
             if (Peek().Type is TokenType.Assign)
             {
-                Consume(); // Consume '='
-                memberValue = ConsumeExpression();
+                Pop(); // Pop '='
+                memberValue = PopExpression();
             }
             members.Add(new EnumMemberNode(memberName, memberValue, memberStartSpan.To(Peek().Span)));
             
-            if (Peek().Type is TokenType.Comma) Consume(); // Consume ','
+            if (Peek().Type is TokenType.Comma) Pop(); // Pop ','
         }
         ExpectType(TokenType.BracketClose, "Expected '}'");
         
         return new EnumDeclarationNode(annotations.OrNew(), access, name, isEnumClass, memberType, memberValues, members.ToValueList(),  startSpan.To(Peek().Span));
     }
-    PropertyDeclarationNode ConsumeProperty(ValueList<AnnotationStatementNode>? annotations, AccessMod? accessMod, MemberMod memberMod, InheritanceMod inheritance)
+    PropertyDeclarationNode PopProperty(ValueList<AnnotationStatementNode>? annotations, AccessMod? accessMod, MemberMod memberMod, InheritanceMod inheritance)
     {
         var startSpan = Peek().Span;
         var access = accessMod ?? AccessModExtensions.PropertyDefault;
 
-        if (Peek().Type is TokenType.InstanceKind && Peek().Value == "extension") Consume(); // Consume 'extension'
+        if (Peek().Type is TokenType.InstanceKind && Peek().Value == "extension") Pop(); // Pop 'extension'
         
-        var name = ConsumeIdentifier();
+        var name = PopIdentifier();
 
         ExpectType(TokenType.Colon, "Expected ':'");
 
-        var type = ConsumeType();
+        var type = PopType();
 
         ExpectType(TokenType.BracketOpen, "Expected '{'");
 
@@ -409,10 +409,10 @@ public sealed class AstBuilder : SafeCollectionIterator<Token, SourceSpan>
             if (Peek().Type is TokenType.GetKeyword or TokenType.SetKeyword or TokenType.InitKeyword)
             {
                 var accessorStart = Peek().Span;
-                var accessorAccess = ConsumeAccessMod() ?? AccessMod.Public;
+                var accessorAccess = PopAccessMod() ?? AccessMod.Public;
                 
                 var kind = Peek().Value.GetAccessorKind() ?? PropertyAccessorKind.Get;
-                Consume(); // Consume 'get|set|init'
+                Pop(); // Pop 'get|set|init'
                 
                 if (kind is PropertyAccessorKind.Get && getter != null)
                 {
@@ -426,8 +426,8 @@ public sealed class AstBuilder : SafeCollectionIterator<Token, SourceSpan>
                 }
                 
                 BlockExpressionNode? accessorBlock = null;
-                if (!IsStatementTerminator()) accessorBlock = ConsumeBlock();
-                else ConsumeStatementTerminator();
+                if (!IsStatementTerminator()) accessorBlock = PopBlock();
+                else PopStatementTerminator();
                 
                 var accessor = new PropertyAccessorNode(accessorAccess, accessorBlock, kind, accessorStart);
 
@@ -437,7 +437,7 @@ public sealed class AstBuilder : SafeCollectionIterator<Token, SourceSpan>
             else
             {
                 Error("You can only declare Property accessors here.", Peek().Span);
-                Consume(); // Consume the unknown token
+                Pop(); // Pop the unknown token
             }
         }
         
@@ -446,37 +446,39 @@ public sealed class AstBuilder : SafeCollectionIterator<Token, SourceSpan>
         ExpressionNode? init = null;
         if (Peek().Type is TokenType.Assign)
         {
-            Consume(); // Consume '='
-            init = ConsumeExpression();
+            Pop(); // Pop '='
+            init = PopExpression();
         }
         
+        PopStatementTerminator();
         return new PropertyDeclarationNode(annotations.OrNew(), access, inheritance, memberMod, type, name, getter, setter, init, startSpan.To(Peek().Span));
     }
-    FieldDeclarationNode ConsumeVariableDecl(ValueList<AnnotationStatementNode>? annotations, AccessMod? accessMod, MemberMod memberMod, InheritanceMod inheritance)
+    FieldDeclarationNode PopVariableDecl(ValueList<AnnotationStatementNode>? annotations, AccessMod? accessMod, MemberMod memberMod, InheritanceMod inheritance)
     {
         var startSpan = Peek().Span;
         var access = accessMod ?? AccessModExtensions.VariableDefault;
         
-        var varKind = ConsumeVarKind() ?? VariableKind.Val;
-        var name = ConsumeIdentifier();
+        var varKind = PopVarKind() ?? VariableKind.Val;
+        var name = PopIdentifier();
 
         var type = AeroType.Auto;
         if (Peek().Type is TokenType.Colon)
         {
-            Consume(); // Consume ':'
-            type = ConsumeType();
+            Pop(); // Pop ':'
+            type = PopType();
         }
 
         ExpressionNode? init = null;
         if (Peek().Type is TokenType.Assign)
         {
-            Consume(); // Consume '='
-            init = ConsumeExpression();
+            Pop(); // Pop '='
+            init = PopExpression();
         }
         
+        PopStatementTerminator();
         return new FieldDeclarationNode(annotations.OrNew(), access, inheritance, memberMod, varKind, type, name, init, startSpan.To(Peek().Span));
     }
-    PrimaryConstructorDeclarationNode ConsumePrimaryConstructor()
+    PrimaryConstructorDeclarationNode PopPrimaryConstructor()
     {
         var startSpan = Peek().Span;
         
@@ -487,23 +489,23 @@ public sealed class AstBuilder : SafeCollectionIterator<Token, SourceSpan>
         {
             var paramStart = Peek().Span;
             
-            var varKind = ConsumeVarKind() ?? VariableKind.Val;
-            var name = ConsumeIdentifier();
+            var varKind = PopVarKind() ?? VariableKind.Val;
+            var name = PopIdentifier();
 
             ExpectType(TokenType.Colon, "Expected ':'");
             
-            var type = ConsumeType();
+            var type = PopType();
             
             ExpressionNode? init = null;
             if (Peek().Type is TokenType.Equality)
             {
-                Consume(); // Consume '='
-                init = ConsumeExpression();
+                Pop(); // Pop '='
+                init = PopExpression();
             }
             
             variables.Add(new FieldDeclarationNode([], AccessMod.Private, InheritanceMod.None, MemberMod.None, varKind, type, name, init, paramStart.To(Peek().Span)));
             
-            if (Peek().Type is TokenType.Comma) Consume(); // Consume ','
+            if (Peek().Type is TokenType.Comma) Pop(); // Pop ','
         }
 
         ExpectType(TokenType.ParenthesisClose, "Expected ')'");
@@ -511,95 +513,95 @@ public sealed class AstBuilder : SafeCollectionIterator<Token, SourceSpan>
         var endSpan = startSpan.To(Peek().Span);
         return new PrimaryConstructorDeclarationNode(variables.ToValueList(), endSpan);
     }
-    ConstructorDeclarationNode ConsumeConstructor(ValueList<AnnotationStatementNode>? annotations, AccessMod? accessMod)
+    ConstructorDeclarationNode PopConstructor(ValueList<AnnotationStatementNode>? annotations, AccessMod? accessMod)
     {
         var startSpan = Peek().Span;
         var access = accessMod ?? AccessModExtensions.ConstructorDefault;
 
         ExpectInstance(["constructor"], "Expected 'constructor' keyword");
         
-        var name = ConsumeIdentifier();
-        var parameters = ConsumeParameterDecl();
+        var name = PopIdentifier();
+        var parameters = PopParameterDecl();
 
-        BlockExpressionNode body = ConsumeBlock();
+        BlockExpressionNode body = PopBlock();
         
         return new ConstructorDeclarationNode(annotations.OrNew(), access, name, parameters, body, startSpan.To(Peek().Span.End));
     }
-    DestructorDeclarationNode ConsumeDestructor(ValueList<AnnotationStatementNode>? annotations)
+    DestructorDeclarationNode PopDestructor(ValueList<AnnotationStatementNode>? annotations)
     {
         var startSpan = Peek().Span;
 
         ExpectInstance(["destructor"], "Expected 'destructor' keyword");
         
-        var name = ConsumeIdentifier();
+        var name = PopIdentifier();
         ExpectType(TokenType.ParenthesisOpen, "Expected '('");
         ExpectType(TokenType.ParenthesisClose, "Expected ')'");
 
-        BlockExpressionNode body = ConsumeBlock();
+        BlockExpressionNode body = PopBlock();
         
         return new DestructorDeclarationNode(annotations.OrNew(), name, body, startSpan.To(Peek().Span.End));
     }
     
     
     // Statements
-    StatementNode ConsumeStatement()
+    StatementNode PopStatement()
     {
         var type = Peek().Type;
         switch (type)
         {
             case TokenType.VariableKind:
-                return ConsumeVariable();
+                return PopVariable();
             case TokenType.ReturnKeyword:
-                return ConsumeReturn();
+                return PopReturn();
             case TokenType.WhileKeyword:
-                return ConsumeWhile();
+                return PopWhile();
             case TokenType.BreakKeyword or TokenType.ContinueKeyword:
-                return ConsumeKeyword();
+                return PopKeyword();
         }
         
-        return ConsumeExpressionStatement();
+        return PopExpressionStatement();
     }
-    VariableStatementNode ConsumeVariable()
+    VariableStatementNode PopVariable()
     {
         var startSpan = Peek().Span;
         
-        var varKindNull = ConsumeVarKind();
+        var varKindNull = PopVarKind();
         if (varKindNull is null) Error("You have to specify the variable declaration kind ('const', 'val', 'var')", startSpan);
         var varKind = varKindNull ?? VariableKind.Val;
         
-        var name = ConsumeIdentifier();
+        var name = PopIdentifier();
         var type = AeroType.Auto;
         if (Peek().Type is TokenType.Colon)
         {
-            Consume(); // Consume ':'
-            type = ConsumeType();
+            Pop(); // Pop ':'
+            type = PopType();
         }
         
         ExpressionNode? init = null;
         if (Peek().Type is TokenType.Assign)
         {
-            Consume(); // Consume '='
-            init = ConsumeExpression();
+            Pop(); // Pop '='
+            init = PopExpression();
         }
         
-        ConsumeStatementTerminator();
+        PopStatementTerminator();
         
         return new VariableStatementNode(varKind, type, name, init, startSpan.To(Peek().Span));
     }
-    ReturnStatementNode ConsumeReturn()
+    ReturnStatementNode PopReturn()
     {
         var startSpan = Peek().Span;
 
         ExpectType(TokenType.ReturnKeyword, "Expected 'return'");
 
         ExpressionNode? val = null;
-        if (!IsStatementTerminator()) val = ConsumeExpression();
+        if (!IsStatementTerminator()) val = PopExpression();
         
-        ConsumeStatementTerminator();
+        PopStatementTerminator();
         
         return new ReturnStatementNode(val, startSpan.To(Peek().Span));
     }
-    StatementNode ConsumeKeyword()
+    StatementNode PopKeyword()
     {
         var span = Peek().Span;
         StatementNode statement = Peek().Type switch
@@ -609,34 +611,34 @@ public sealed class AstBuilder : SafeCollectionIterator<Token, SourceSpan>
             _ => new EmptyStatementNode(span)
         };
 
-        if (statement is not EmptyStatementNode) Consume(); // Consume the keyword
+        if (statement is not EmptyStatementNode) Pop(); // Pop the keyword
 
-        ConsumeStatementTerminator();
+        PopStatementTerminator();
         
         return statement;
     }
-    WhileStatementNode ConsumeWhile()
+    WhileStatementNode PopWhile()
     {
         var startSpan = Peek().Span;
         
         ExpectType(TokenType.WhileKeyword, "Expected 'while'");
         
         ExpectType(TokenType.ParenthesisOpen, "Expected '('");
-        var condition = ConsumeExpression();
+        var condition = PopExpression();
         ExpectType(TokenType.ParenthesisClose, "Expected ')'");
         
-        var body = ConsumeBlock();
+        var body = PopBlock();
         
-        ConsumeStatementTerminator();
+        PopStatementTerminator();
         
         return new WhileStatementNode(condition, body, startSpan.To(Peek().Span));
     }
-    StatementNode ConsumeExpressionStatement()
+    StatementNode PopExpressionStatement()
     {
         var startSpan = Peek().Span;
         
-        var expression = ConsumeExpression();
-        ConsumeStatementTerminator();
+        var expression = PopExpression();
+        PopStatementTerminator();
         
         if (expression is BinaryExpressionNode bin && bin.Operator.IsAssignment())
         {
@@ -645,7 +647,7 @@ public sealed class AstBuilder : SafeCollectionIterator<Token, SourceSpan>
         
         return new ExpressionStatementNode(expression, startSpan.To(Peek().Span));
     }
-    ImportStatementNode ConsumeImport()
+    ImportStatementNode PopImport()
     {
         var start = Peek().Span;
 
@@ -658,10 +660,10 @@ public sealed class AstBuilder : SafeCollectionIterator<Token, SourceSpan>
         }
         else
         {
-            ExpectType(TokenType.ImportKeyword, "ConsumeImport keyword not found.");
+            ExpectType(TokenType.ImportKeyword, "PopImport keyword not found.");
         }
 
-        var identifier = ConsumeIdentifier();
+        var identifier = PopIdentifier();
         
         if (isFrom)
         {
@@ -670,54 +672,56 @@ public sealed class AstBuilder : SafeCollectionIterator<Token, SourceSpan>
             List<string> subImports = [];
             while (Peek().Type is TokenType.Identifier and not TokenType.Eof)
             {
-                subImports.Add(Consume().Value);
+                subImports.Add(Pop().Value);
 
-                if (Peek().Type is TokenType.Comma) Consume(); // Consume trailing comma
+                if (Peek().Type is TokenType.Comma) Pop(); // Pop trailing comma
             }
             
+            PopStatementTerminator();
             return new ImportStatementNode(identifier, subImports.ToValueList(), start.To(Peek().Span.End));
         }
-
+        
+        PopStatementTerminator();
         return new ImportStatementNode(identifier, [], start.To(Peek().Span.End));
     }
     
     
     // Expressions
-    ExpressionNode ConsumeExpression(bool allowUnparenthesizedBlock = true)
+    ExpressionNode PopExpression(bool allowUnparenthesizedBlock = true)
     {
-        return ConsumeRange(allowUnparenthesizedBlock); // Start with range and cascade down
+        return PopRange(allowUnparenthesizedBlock); // Start with range and cascade down
     }
-    ExpressionNode ConsumePrimary()
+    ExpressionNode PopPrimary()
     {
         var firstToken = Peek().Type;
 
         // Ensure Dot is excluded from prefix unary operations
         if (firstToken.IsOperator() && firstToken is not TokenType.Dot)
         {
-            return ConsumeUnary();
+            return PopUnary();
         }
 
         switch (firstToken)
         {
             case TokenType.ParenthesisOpen:
-                return ConsumeScoped();
+                return PopScoped();
             
             case TokenType.IfKeyword:
-                return ConsumeIf();
+                return PopIf();
             case TokenType.ForKeyword:
-                return ConsumeFor();
+                return PopFor();
             case TokenType.MatchKeyword:
-                return ConsumeMatch();
+                return PopMatch();
             case TokenType.ConcurrentKeyword:
-                return ConsumeConcurrent();
+                return PopConcurrent();
             case TokenType.SpawnKeyword:
-                return ConsumeSpawn();
+                return PopSpawn();
             case TokenType.Identifier:
-                return ConsumeIdentifierExpr();
+                return PopIdentifierExpr();
             case TokenType.InterpolationStart:
-                return ConsumeInterpolation();
+                return PopInterpolation();
             case TokenType.BracketOpen:
-                return ConsumeLambda();
+                return PopLambda();
             case TokenType.CharLiteral
                 or TokenType.StringLiteral
                 or TokenType.IntLiteral
@@ -727,15 +731,15 @@ public sealed class AstBuilder : SafeCollectionIterator<Token, SourceSpan>
                 or TokenType.SelfLiteral
                 or TokenType.ItLiteral
                 or TokenType.SquareOpen:
-                return ConsumeLiteral();
+                return PopLiteral();
             default:
                 Error($"Unexpected token: {firstToken}", Peek().Span);
                 return null!;
         }
     }
-    ExpressionNode ConsumePostfix(bool allowUnparenthesizedBlock = true)
+    ExpressionNode PopPostfix(bool allowUnparenthesizedBlock = true)
     {
-        var expr = ConsumePrimary();
+        var expr = PopPrimary();
 
         while (true)
         {
@@ -743,19 +747,19 @@ public sealed class AstBuilder : SafeCollectionIterator<Token, SourceSpan>
 
             if (tokenType is TokenType.Dot)
             {
-                expr = ConsumeMemberAccess(expr);
+                expr = PopMemberAccess(expr);
             }
             else if (tokenType is TokenType.ParenthesisOpen)
             {
-                expr = ConsumeCall(expr);
+                expr = PopCall(expr);
             }
             else if (tokenType is TokenType.BracketOpen && allowUnparenthesizedBlock)
             {
-                expr = ConsumeCall(expr);
+                expr = PopCall(expr);
             }
             else if (tokenType is TokenType.SquareOpen)
             {
-                expr = ConsumeIndex(expr);
+                expr = PopIndex(expr);
             }
             else
             {
@@ -765,17 +769,17 @@ public sealed class AstBuilder : SafeCollectionIterator<Token, SourceSpan>
 
         return expr;
     }
-    ScopedExpressionNode ConsumeScoped()
+    ScopedExpressionNode PopScoped()
     {
         var startSpan = Peek().Span;
         
         ExpectType(TokenType.ParenthesisOpen, "Expected '('");
-        var expr = ConsumeExpression(); // Cascades back down to the lowest precedence level
+        var expr = PopExpression(); // Cascades back down to the lowest precedence level
         ExpectType(TokenType.ParenthesisClose, "Expected ')'");
         
         return new ScopedExpressionNode(expr, startSpan.To(Peek().Span)); 
     }
-    BlockExpressionNode ConsumeBlock()
+    BlockExpressionNode PopBlock()
     {
         var startSpan = Peek().Span;
 
@@ -784,8 +788,8 @@ public sealed class AstBuilder : SafeCollectionIterator<Token, SourceSpan>
         if (Peek().Type is TokenType.EqualArrow)
         {
             isSingleLine = true;
-            Consume(); // Consume '=>'
-            statements.Add(ConsumeStatement());
+            Pop(); // Pop '=>'
+            statements.Add(PopStatement());
         }
         else
         {
@@ -793,7 +797,7 @@ public sealed class AstBuilder : SafeCollectionIterator<Token, SourceSpan>
 
             while (Peek().Type is not TokenType.BracketClose and not TokenType.Eof)
             {
-                statements.Add(ConsumeStatement());
+                statements.Add(PopStatement());
             }
             
             ExpectType(TokenType.BracketClose, "Expected '}'");
@@ -801,16 +805,16 @@ public sealed class AstBuilder : SafeCollectionIterator<Token, SourceSpan>
         
         return new BlockExpressionNode(isSingleLine, statements.ToValueList(), startSpan.To(Peek().Span));
     }
-    IfExpressionNode ConsumeIf()
+    IfExpressionNode PopIf()
     {
         var startSpan = Peek().Span;
         
         ExpectType(TokenType.IfKeyword, "Expected 'if'");
         ExpectType(TokenType.ParenthesisOpen, "Expected '('");
-        var condition = ConsumeExpression();
+        var condition = PopExpression();
         ExpectType(TokenType.ParenthesisClose, "Expected ')'");
 
-        var thenBranch = ConsumeBlock();
+        var thenBranch = PopBlock();
         
         List<(ExpressionNode condition, BlockExpressionNode body)> elseIfs = [];
         while (Peek().Type is TokenType.ElseKeyword && Peek(1).Type is TokenType.IfKeyword)
@@ -819,10 +823,10 @@ public sealed class AstBuilder : SafeCollectionIterator<Token, SourceSpan>
             ExpectType(TokenType.IfKeyword, "Expected 'if'");
             
             ExpectType(TokenType.ParenthesisOpen, "Expected '('");
-            var elseIfCondition = ConsumeExpression();
+            var elseIfCondition = PopExpression();
             ExpectType(TokenType.ParenthesisClose, "Expected ')'");
             
-            var elseIfBranch = ConsumeBlock();
+            var elseIfBranch = PopBlock();
             
             elseIfs.Add((elseIfCondition, elseIfBranch));
         }
@@ -832,12 +836,12 @@ public sealed class AstBuilder : SafeCollectionIterator<Token, SourceSpan>
         {
             ExpectType(TokenType.ElseKeyword, "Expected 'else'");
                 
-            elseBranch = ConsumeBlock();
+            elseBranch = PopBlock();
         }
         
         return new IfExpressionNode(condition, thenBranch, elseIfs.ToValueList(), elseBranch, startSpan.To(Peek().Span));
     }
-    ForExpressionNode ConsumeFor()
+    ForExpressionNode PopFor()
     {
         var startSpan = Peek().Span;
         
@@ -845,48 +849,48 @@ public sealed class AstBuilder : SafeCollectionIterator<Token, SourceSpan>
         ExpectType(TokenType.ParenthesisOpen, "Expected '('");
         
         var paramStart = Peek().Span;
-        var name = ConsumeIdentifier();
+        var name = PopIdentifier();
         var type = AeroType.Auto;
         if (Peek().Type is TokenType.Colon)
         {
             ExpectType(TokenType.Colon, "Expected ':'");
-            type = ConsumeType();
+            type = PopType();
         }
         
         ExpectType(TokenType.InKeyword, "Expected 'in'");
         
-        var collection = ConsumeExpression();
+        var collection = PopExpression();
         ExpectType(TokenType.ParenthesisClose, "Expected ')'");
 
-        var body = ConsumeBlock();
+        var body = PopBlock();
         
         return new ForExpressionNode(new ParamNode(name, type, paramStart.To(Peek().Span)), collection, body, startSpan.To(Peek().Span));
     }
-    SpawnExpressionNode ConsumeSpawn()
+    SpawnExpressionNode PopSpawn()
     {
         var startSpan = Peek().Span;
         ExpectType(TokenType.SpawnKeyword, "Expected 'spawn'");
         
-        var body = ConsumeBlock();
+        var body = PopBlock();
         
         return new SpawnExpressionNode(body, startSpan.To(Peek().Span));
     }
-    ConcurrentExpressionNode ConsumeConcurrent()
+    ConcurrentExpressionNode PopConcurrent()
     {
         var startSpan = Peek().Span;
         ExpectType(TokenType.ConcurrentKeyword, "Expected 'concurrent'");
         
-        var body = ConsumeBlock();
+        var body = PopBlock();
         
         return new ConcurrentExpressionNode(body, startSpan.To(Peek().Span));
     }
-    MatchExpressionNode ConsumeMatch()
+    MatchExpressionNode PopMatch()
     {
         var startSpan = Peek().Span;
         
         ExpectType(TokenType.MatchKeyword, "Expected 'match'");
         ExpectType(TokenType.ParenthesisOpen, "Expected '('");
-        var target = ConsumeExpression();
+        var target = PopExpression();
         ExpectType(TokenType.ParenthesisClose, "Expected ')'");
 
         ExpectType(TokenType.BracketOpen, "Expected '{'");
@@ -896,10 +900,10 @@ public sealed class AstBuilder : SafeCollectionIterator<Token, SourceSpan>
         {
             var patternStart = Peek().Span;
             
-            var pattern = ConsumeExpression(false);
-            var body = ConsumeBlock();
+            var pattern = PopExpression(false);
+            var body = PopBlock();
 
-            if (Peek().Type is TokenType.Comma) Consume(); // Consume ','
+            if (Peek().Type is TokenType.Comma) Pop(); // Pop ','
             
             cases.Add(new CaseExpressionNode(pattern, body, patternStart.To(Peek().Span)));
         }
@@ -907,7 +911,7 @@ public sealed class AstBuilder : SafeCollectionIterator<Token, SourceSpan>
 
         return new MatchExpressionNode(target, cases.ToValueList(), startSpan.To(Peek().Span));
     }
-    ExpressionNode ConsumeLiteral()
+    ExpressionNode PopLiteral()
     {
         var startSpan = Peek().Span;
         
@@ -944,13 +948,13 @@ public sealed class AstBuilder : SafeCollectionIterator<Token, SourceSpan>
                 obj = token.Value;
                 break;
             case TokenType.SquareOpen:
-                Consume(); // Consume '['
+                Pop(); // Pop '['
 
                 List<ExpressionNode> elements = [];
                 while (Peek().Type is not TokenType.SquareClose and not TokenType.Eof)
                 {
-                    elements.Add(ConsumeExpression());
-                    if (Peek().Type is TokenType.Comma) Consume(); // Consume ','
+                    elements.Add(PopExpression());
+                    if (Peek().Type is TokenType.Comma) Pop(); // Pop ','
                 }
                 ExpectType(TokenType.SquareClose, "Expected ']'");
 
@@ -958,39 +962,39 @@ public sealed class AstBuilder : SafeCollectionIterator<Token, SourceSpan>
         }
         
         if (obj is null) Error("Literal could not be parsed", startSpan);
-        else Consume(); // Consume the literal token
+        else Pop(); // Pop the literal token
         
         return new LiteralExpressionNode(obj ?? 0, token.Type, startSpan.To(Peek().Span));
     }
-    IdentifierExpressionNode ConsumeIdentifierExpr()
+    IdentifierExpressionNode PopIdentifierExpr()
     {
         var token = ExpectType(TokenType.Identifier, "LogicalNot an identifier");
         return new IdentifierExpressionNode(token.Value, token.Span);
     }
-    MemberAccessExpressionNode ConsumeMemberAccess(ExpressionNode source)
+    MemberAccessExpressionNode PopMemberAccess(ExpressionNode source)
     {
         var startSpan = source.Span;
         ExpectType(TokenType.Dot, "Expected '.'");
-        var member = ConsumeIdentifierExpr();
+        var member = PopIdentifierExpr();
 
         return new MemberAccessExpressionNode(source, member, startSpan.To(Peek().Span));
     }
-    CallExpressionNode ConsumeCall(ExpressionNode target)
+    CallExpressionNode PopCall(ExpressionNode target)
     {
         var startSpan = target.Span;
         List<ExpressionNode> parameters = [];
         
         if (Peek().Type is TokenType.ParenthesisOpen)
         {
-            Consume(); // Consume '('
+            Pop(); // Pop '('
 
             while (Peek().Type is not TokenType.ParenthesisClose and not TokenType.Eof)
             {
-                parameters.Add(ConsumeExpression());
+                parameters.Add(PopExpression());
 
                 if (Peek().Type is TokenType.Comma)
                 {
-                    Consume();
+                    Pop();
                 }
             }
 
@@ -1000,51 +1004,51 @@ public sealed class AstBuilder : SafeCollectionIterator<Token, SourceSpan>
         // Kotlin style trailing lambda parsing
         if (Peek().Type is TokenType.BracketOpen)
         {
-            parameters.Add(ConsumeLambda());
+            parameters.Add(PopLambda());
         }
 
         return new CallExpressionNode(target, parameters.ToValueList(), startSpan.To(Peek().Span));
     }
-    IndexExpressionNode ConsumeIndex(ExpressionNode target)
+    IndexExpressionNode PopIndex(ExpressionNode target)
     {
         var startSpan = target.Span;
         
         ExpectType(TokenType.SquareOpen, "Expected '['");
-        var index = ConsumeExpression();
+        var index = PopExpression();
         ExpectType(TokenType.SquareClose, "Expected ']'");
         
         return new IndexExpressionNode(target, index, startSpan.To(Peek().Span));
     }
-    ExpressionNode ConsumeRange(bool allowUnparenthesizedBlock = true)
+    ExpressionNode PopRange(bool allowUnparenthesizedBlock = true)
     {
         // 1. Handle Prefix Range (..b) or Full Range (..)
         if (IsRangeToken())
         {
             var startSpan = Peek().Span;
-            Consume(); // Consume '..'
+            Pop(); // Pop '..'
 
             ExpressionNode? right = null;
             if (CanStartExpression())
             {
-                right = ConsumeBinary(allowUnparenthesizedBlock);
+                right = PopBinary(allowUnparenthesizedBlock);
             }
 
             return new RangeExpressionNode(null, right, startSpan.To(Peek().Span));
         }
 
         // 2. Parse the left-hand expression
-        var left = ConsumeBinary(allowUnparenthesizedBlock);
+        var left = PopBinary(allowUnparenthesizedBlock);
 
         // 3. Handle Binary Range (a..b) or Postfix Range (a..)
         if (IsRangeToken())
         {
             var startSpan = left.Span;
-            Consume(); // Consume '..'
+            Pop(); // Pop '..'
 
             ExpressionNode? right = null;
             if (CanStartExpression())
             {
-                right = ConsumeBinary(allowUnparenthesizedBlock);
+                right = PopBinary(allowUnparenthesizedBlock);
             }
 
             return new RangeExpressionNode(left, right, startSpan.To(Peek().Span));
@@ -1052,38 +1056,38 @@ public sealed class AstBuilder : SafeCollectionIterator<Token, SourceSpan>
 
         return left;
     }
-    ExpressionNode ConsumeBinary(bool allowUnparenthesizedBlock = true)
+    ExpressionNode PopBinary(bool allowUnparenthesizedBlock = true)
     {
-        var left = ConsumeCast(allowUnparenthesizedBlock);
+        var left = PopCast(allowUnparenthesizedBlock);
 
         while (Peek().Type.IsOperator() && Peek().Type is not TokenType.Dot && Peek().Type is not TokenType.CastSymbol && !IsRangeToken())
         {
             var startSpan = left.Span;
-            var op = ConsumeOperator();
-            var right = ConsumeCast(allowUnparenthesizedBlock);
+            var op = PopOperator();
+            var right = PopCast(allowUnparenthesizedBlock);
 
             left = new BinaryExpressionNode(left, op, right, startSpan.To(Peek().Span));
         }
 
         return left;
     }
-    ExpressionNode ConsumeCast(bool allowUnparenthesizedBlock = true)
+    ExpressionNode PopCast(bool allowUnparenthesizedBlock = true)
     {
-        var expr = ConsumePostfix(allowUnparenthesizedBlock);
+        var expr = PopPostfix(allowUnparenthesizedBlock);
 
         while (Peek().Type is TokenType.CastSymbol)
         {
             var startSpan = expr.Span;
-            Consume(); // Consume '::'
+            Pop(); // Pop '::'
 
-            var target = ConsumePostfix(allowUnparenthesizedBlock);
+            var target = PopPostfix(allowUnparenthesizedBlock);
 
             expr = new BinaryExpressionNode(expr, Operator.CastSymbol, target, startSpan.To(Peek().Span));
         }
 
         return expr;
     }
-    UnaryExpressionNode ConsumeUnary()
+    UnaryExpressionNode PopUnary()
     {
         var startSpan = Peek().Span;
 
@@ -1092,18 +1096,18 @@ public sealed class AstBuilder : SafeCollectionIterator<Token, SourceSpan>
         ExpressionNode target;
         if (isPostFix)
         {
-            target = ConsumeExpression();
-            op = ConsumeOperator();
+            target = PopExpression();
+            op = PopOperator();
         }
         else
         {
-            op = ConsumeOperator();
-            target = ConsumeExpression();
+            op = PopOperator();
+            target = PopExpression();
         }
 
         return new UnaryExpressionNode(op, target, isPostFix, startSpan.To(Peek().Span));
     }
-    LambdaExpressionNode ConsumeLambda()
+    LambdaExpressionNode PopLambda()
     {
         var startSpan = Peek().Span;
         
@@ -1116,12 +1120,12 @@ public sealed class AstBuilder : SafeCollectionIterator<Token, SourceSpan>
             {
                 var paramStart = Peek().Span;
             
-                var name = ConsumeIdentifier();
+                var name = PopIdentifier();
                 var type = AeroType.Auto;
                 if (Peek().Type is TokenType.Colon)
                 {
-                    Consume(); // Consume ':'
-                    type = ConsumeType();
+                    Pop(); // Pop ':'
+                    type = PopType();
                 }
             
                 parameters.Add(new ParamNode(name, type, paramStart.To(Peek().Span)));
@@ -1132,14 +1136,14 @@ public sealed class AstBuilder : SafeCollectionIterator<Token, SourceSpan>
         List<StatementNode> statements = [];
         while (Peek().Type is not TokenType.BracketClose and not TokenType.Eof)
         {
-            statements.Add(ConsumeStatement());
+            statements.Add(PopStatement());
         }
         ExpectType(TokenType.BracketClose, "Expected '}'");
         var block = new BlockExpressionNode(false, statements.ToValueList(), startSpan.To(Peek().Span));
         
         return new LambdaExpressionNode(parameters.ToValueList(), block, startSpan.To(Peek().Span));
 }
-    StringInterpolationExpressionNode ConsumeInterpolation()
+    StringInterpolationExpressionNode PopInterpolation()
     {
         var startSpan = Peek().Span;
 
@@ -1151,25 +1155,25 @@ public sealed class AstBuilder : SafeCollectionIterator<Token, SourceSpan>
             // 1. Raw string segment fragment
             if (Peek().Type is TokenType.StringLiteral)
             {
-                parts.Add(ConsumeLiteral());
+                parts.Add(PopLiteral());
             }
             // 2. Embedded expression within braces: ${ expr } or { expr }
             else if (Peek().Type is TokenType.BracketOpen)
             {
-                Consume(); // Consume '{'
-                parts.Add(ConsumeExpression());
+                Pop(); // Pop '{'
+                parts.Add(PopExpression());
                 ExpectType(TokenType.BracketClose, "Expected '}' after interpolated expression");
             }
             // 3. Direct inline expression: $identifier
             else
             {
-                parts.Add(ConsumeExpression());
+                parts.Add(PopExpression());
             }
         }
 
         if (Peek().Type is TokenType.InterpolationEnd)
         {
-            Consume(); // Consume closing string delimiter / token
+            Pop(); // Pop closing string delimiter / token
         }
 
         return new StringInterpolationExpressionNode(parts.ToValueList(), startSpan.To(Peek().Span));
@@ -1187,43 +1191,43 @@ public sealed class AstBuilder : SafeCollectionIterator<Token, SourceSpan>
             or TokenType.Semicolon 
             or TokenType.Eof);
     }
-    Operator ConsumeOperator()
+    Operator PopOperator()
     {
         var opToken = Peek();
         var op = Operator.Assign;
-        if (Peek().Type.IsOperator()) op = Consume().Type.ToOperator();
-        else Error($"'{opToken.Value}' is not an operator", Consume().Span);
+        if (Peek().Type.IsOperator()) op = Pop().Type.ToOperator();
+        else Error($"'{opToken.Value}' is not an operator", Pop().Span);
 
         return op;
     }
-    string ConsumeIdentifier()
+    string PopIdentifier()
     {
         // Make sure that the identifier is not nothing
         var first = ExpectType(TokenType.Identifier, "Identifier not found").Value;
         
         string name = first;
-        if (Peek().Type is TokenType.Dot) name += Consume().Value;
+        if (Peek().Type is TokenType.Dot) name += Pop().Value;
         
         while (Peek().Type is TokenType.Identifier)
         {
-            name += Consume().Value;
+            name += Pop().Value;
 
-            // Consume the dot between two identifiers and add it
+            // Pop the dot between two identifiers and add it
             if (Peek().Type is TokenType.Dot && Peek(1).Type is TokenType.Identifier)
             {
-                name += Consume().Value;
+                name += Pop().Value;
             }
         }
 
         return name;
     }
-    AccessMod? ConsumeAccessMod()
+    AccessMod? PopAccessMod()
     {
         AccessMod? mod = null;
         
         if (Peek().Type is TokenType.AccessModifierKind)
         {
-            mod = Consume().Value switch
+            mod = Pop().Value switch
             {
                 "public" => AccessMod.Public,
                 "internal" => AccessMod.Internal,
@@ -1234,13 +1238,13 @@ public sealed class AstBuilder : SafeCollectionIterator<Token, SourceSpan>
         
         return mod;
     }
-    MemberMod ConsumeMemberMod()
+    MemberMod PopMemberMod()
     {
         var mod = MemberMod.None;
         
         while (Peek().Type is TokenType.MemberModifierKind)
         {
-            mod |= Consume().Value switch
+            mod |= Pop().Value switch
             {
                 "static" => MemberMod.Static,
                 "weak" => MemberMod.Weak,
@@ -1252,13 +1256,13 @@ public sealed class AstBuilder : SafeCollectionIterator<Token, SourceSpan>
 
         return mod;
     }
-    InheritanceMod ConsumeInheritance()
+    InheritanceMod PopInheritance()
     {
         var mod = InheritanceMod.None;
 
         if (Peek().Type is TokenType.InheritanceModifierKind)
         {
-            mod = Consume().Value switch
+            mod = Pop().Value switch
             {
                 "virtual" => InheritanceMod.Virtual,
                 "abstract" => InheritanceMod.Abstract,
@@ -1270,13 +1274,13 @@ public sealed class AstBuilder : SafeCollectionIterator<Token, SourceSpan>
 
         return mod;
     }
-    VariableKind? ConsumeVarKind()
+    VariableKind? PopVarKind()
     {
         VariableKind? mod = null;
         
         if (Peek().Type is TokenType.VariableKind)
         {
-            mod = Consume().Value switch
+            mod = Pop().Value switch
             {
                 "var" => VariableKind.Var,
                 "const" => VariableKind.Const,
@@ -1287,34 +1291,34 @@ public sealed class AstBuilder : SafeCollectionIterator<Token, SourceSpan>
         
         return mod;
     }
-    AeroType ConsumeType()
+    AeroType PopType()
     {
         AeroType baseType;
         
         bool isRef = Peek().Type is TokenType.RefKeyword;
-        if (isRef) Consume();
+        if (isRef) Pop();
 
         // A lambda type
         if (Peek().Type is TokenType.ParenthesisOpen)
         {
-            Consume(); // Consume '('
+            Pop(); // Pop '('
 
             List<TypeParam> parameters = [];
             while (Peek().Type is not TokenType.ParenthesisClose and not TokenType.Eof)
             {
-                parameters.Add(ConsumeTypeParam());
-                if (Peek().Type is TokenType.Comma) Consume(); // Consume ','
+                parameters.Add(PopTypeParam());
+                if (Peek().Type is TokenType.Comma) Pop(); // Pop ','
             }
             ExpectType(TokenType.ParenthesisClose, "Expected ')'");
 
             bool isLambdaNullable = Peek().Type is TokenType.Nullable;
-            if (isLambdaNullable) Consume();
+            if (isLambdaNullable) Pop();
             
             AeroType returnType = AeroType.Void;
             if (Peek().Type is TokenType.ArrowSymbol)
             {
-                Consume(); // Consume '->'
-                returnType = ConsumeType();
+                Pop(); // Pop '->'
+                returnType = PopType();
             }
             
             baseType = new LambdaType(parameters.ToValueList(), returnType, isRef, isLambdaNullable);
@@ -1327,13 +1331,13 @@ public sealed class AstBuilder : SafeCollectionIterator<Token, SourceSpan>
                 Error("Expected identifier", Peek().Span);
                 return AeroType.Error;
             }
-            var name = ConsumeIdentifier();
+            var name = PopIdentifier();
         
             // A generic type
             List<GenericParameterType>? generics = null;
             if (Peek().Type is TokenType.LessThan)
             {
-                Consume(); // Consume '<'
+                Pop(); // Pop '<'
                 generics = [];
             
                 while (Peek().Type is not TokenType.GreaterThan and not TokenType.Eof) // Make sure trailing commas are handled correctly and do not try to
@@ -1341,23 +1345,23 @@ public sealed class AstBuilder : SafeCollectionIterator<Token, SourceSpan>
                     // ref G? : String
                 
                     bool isParamRef = Peek().Type is TokenType.RefKeyword;
-                    if (isParamRef) Consume();
+                    if (isParamRef) Pop();
 
-                    var paramName = ConsumeIdentifier();
+                    var paramName = PopIdentifier();
                 
                     bool isParamNullable = Peek().Type is TokenType.Nullable;
-                    if (isParamNullable) Consume();
+                    if (isParamNullable) Pop();
 
                     AeroType? constraint = null;
                     if (Peek().Type is TokenType.Colon)
                     {
-                        Consume(); // Consume ':'
-                        constraint = ConsumeType();
+                        Pop(); // Pop ':'
+                        constraint = PopType();
                     }
                 
                     if (Peek().Type is TokenType.Comma)
                     {
-                        Consume(); // Consume ','
+                        Pop(); // Pop ','
                     }
 
                     generics.Add(new GenericParameterType(paramName, constraint, isParamRef, isParamNullable));
@@ -1366,7 +1370,7 @@ public sealed class AstBuilder : SafeCollectionIterator<Token, SourceSpan>
             }
         
             bool isNullable = Peek().Type is TokenType.Nullable;
-            if (isNullable) Consume();
+            if (isNullable) Pop();
         
             baseType = new ScalarType(
                 Name: name, 
@@ -1380,11 +1384,11 @@ public sealed class AstBuilder : SafeCollectionIterator<Token, SourceSpan>
         
         while (Peek().Type is TokenType.SquareOpen)
         {
-            Consume(); // Consume '['
+            Pop(); // Pop '['
             ExpectType(TokenType.SquareClose, "Expected ']'");
             
             bool isArrayNullable = Peek().Type is TokenType.Nullable;
-            if (isArrayNullable) Consume();
+            if (isArrayNullable) Pop();
             
             baseType = new ArrayType(
                 ElementType: baseType,
@@ -1395,15 +1399,15 @@ public sealed class AstBuilder : SafeCollectionIterator<Token, SourceSpan>
         
         return baseType with { IsRef = isRef };
     }
-    TypeParam ConsumeTypeParam()
+    TypeParam PopTypeParam()
     {
-        var name = ConsumeIdentifier();
+        var name = PopIdentifier();
         ExpectType(TokenType.Colon, "Expected ':'");
-        var type = ConsumeType();
+        var type = PopType();
 
         return new TypeParam(name, type);
     }
-    ValueList<ParamNode> ConsumeParameterDecl()
+    ValueList<ParamNode> PopParameterDecl()
     {
         ExpectType(TokenType.ParenthesisOpen, "Expected '('");
 
@@ -1412,74 +1416,74 @@ public sealed class AstBuilder : SafeCollectionIterator<Token, SourceSpan>
         {
             var paramStart = Peek().Span;
 
-            var varKind = ConsumeVarKind() ?? VariableKind.Val;
-            var name = ConsumeIdentifier();
+            var varKind = PopVarKind() ?? VariableKind.Val;
+            var name = PopIdentifier();
 
             ExpectType(TokenType.Colon, "Expected ':'");
             
-            var type = ConsumeType();
+            var type = PopType();
             ExpressionNode? init = null;
 
             if (Peek().Type is TokenType.Equality)
             {
-                Consume(); // Consume '='
+                Pop(); // Pop '='
 
-                init = ConsumeExpression();
+                init = PopExpression();
             }
             
             result.Add(new ParamNode(name, type, paramStart.To(Peek().Span), init, varKind));
             
-            if (Peek().Type is TokenType.Comma) Consume(); // Consume ','
+            if (Peek().Type is TokenType.Comma) Pop(); // Pop ','
         }
         
         ExpectType(TokenType.ParenthesisClose, "Expected ')'");
         
         return result.ToValueList();
     }
-    ValueList<AeroType> ConsumeImplementations()
+    ValueList<AeroType> PopImplementations()
     {
         List<AeroType> results = [];
         if (Peek().Type is TokenType.Colon)
         {
-            Consume(); // Consume ':'
+            Pop(); // Pop ':'
             
             while (Peek().Type is not TokenType.Eof and not TokenType.Semicolon and not TokenType.BracketOpen)
             {
-                results.Add(ConsumeType());
+                results.Add(PopType());
 
-                if (Peek().Type is TokenType.Comma) Consume(); // Consume ','
+                if (Peek().Type is TokenType.Comma) Pop(); // Pop ','
             }
         }
 
         return results.ToValueList();
     }
-    ValueList<GenericParameterType> ConsumeGenericDecls()
+    ValueList<GenericParameterType> PopGenericDecls()
     {
         List<GenericParameterType> generics = [];
         if (Peek().Type is TokenType.LessThan)
         {
-            Consume(); // Consume '<'
+            Pop(); // Pop '<'
             
             while (Peek().Type is not TokenType.GreaterThan and not TokenType.Eof)
             {
                 var startSpan = Peek().Span;
 
-                var name = ConsumeIdentifier();
+                var name = PopIdentifier();
                 AeroType? typeConstraint = null;
 
                 if (Peek().Type is TokenType.Colon)
                 {
-                    Consume(); // Consume ':'
+                    Pop(); // Pop ':'
                     
-                    typeConstraint = ConsumeType();
+                    typeConstraint = PopType();
                 }
                 
                 generics.Add(new(name, typeConstraint));
 
-                // Consumes
+                // Pops
                 if (Peek().Type is TokenType.Comma && Peek(1).Type is not TokenType.GreaterThan)
                 {
-                    Consume(); // Consume commas
+                    Pop(); // Pop commas
                 }
             }
 
@@ -1488,12 +1492,12 @@ public sealed class AstBuilder : SafeCollectionIterator<Token, SourceSpan>
 
         return generics.ToValueList();
     }
-    ValueList<AnnotationStatementNode> ConsumeAnnotations()
+    ValueList<AnnotationStatementNode> PopAnnotations()
     {
         List<AnnotationStatementNode> annotations = [];
         while (Peek().Type is TokenType.At and not TokenType.Eof)
         {
-            annotations.Add(ConsumeAnnotation());
+            annotations.Add(PopAnnotation());
         }
 
         return annotations.ToValueList();
@@ -1504,14 +1508,14 @@ public sealed class AstBuilder : SafeCollectionIterator<Token, SourceSpan>
         if (Peek().Type is TokenType.Semicolon or TokenType.Eof)
             return true;
 
-        // Check if a line break occurred between the previous consumed token and current token
+        // Check if a line break occurred between the previous Popped token and current token
         return Peek().Span.Start.Line > Peek(-1).Span.End.Line;
     }
-    void ConsumeStatementTerminator()
+    void PopStatementTerminator()
     {
         if (IsStatementTerminator())
         {
-            if (Peek().Type is TokenType.Semicolon) Consume();
+            if (Peek().Type is TokenType.Semicolon) Pop();
         }
     }
     bool TryParseIntLiteral(string text, out int result)
@@ -1548,6 +1552,12 @@ public sealed class AstBuilder : SafeCollectionIterator<Token, SourceSpan>
     }
     
     // Helper methods
-    void ExpectInstance(string[] instanceNames, string errorMessage, SourceSpan? location = null) => Expect(t => t.Type is TokenType.InstanceKind && instanceNames.Contains(t.Value), errorMessage, location);
-    Token ExpectType(TokenType expectedType, string errorMessage, SourceSpan? location = null) => Expect(t => t.Type == expectedType, errorMessage, location);
+    void ExpectInstance(string[] instanceNames, string errorMessage, SourceSpan? location = null)
+    {
+        Expect(t => t.Type is TokenType.InstanceKind && instanceNames.Contains(t.Value), errorMessage, location ?? Peek().Span);
+    }
+    Token ExpectType(TokenType expectedType, string errorMessage, SourceSpan? location = null)
+    {
+        return Expect(t => t.Type == expectedType, errorMessage, location ?? Peek().Span);
+    }
 }

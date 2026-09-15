@@ -63,7 +63,7 @@ public class TypeLookup : AstVisitor
 
     protected override void VisitClass(ClassDeclarationNode node)
     {
-        var symbol = new ClassSymbol(node, CurrentModule, CurrentScope) { Scope = new TypeScope(CurrentScope) };
+        var symbol = new ClassSymbol(node, CurrentModule, CurrentScope) { Scope = new TypeScope(CurrentScope) { GenericNames = node.GenericParameters.Select(g => g.Name).ToHashSet() } };
 
         foreach (var decl in node.Declarations)
         {
@@ -85,7 +85,7 @@ public class TypeLookup : AstVisitor
     }
     protected override void VisitTrait(TraitDeclarationNode node)
     {
-        var symbol = new TraitSymbol(node, CurrentModule, CurrentScope) { Scope = new TypeScope(CurrentScope) };
+        var symbol = new TraitSymbol(node, CurrentModule, CurrentScope) { Scope = new TypeScope(CurrentScope) { GenericNames = node.GenericParameters.Select(g => g.Name).ToHashSet() } };
 
         foreach (var decl in node.Declarations)
         {
@@ -96,7 +96,7 @@ public class TypeLookup : AstVisitor
     }
     protected override void VisitRecord(RecordDeclarationNode node)
     {
-        var symbol = new RecordSymbol(node, CurrentModule, CurrentScope) { Scope = new TypeScope(CurrentScope) };
+        var symbol = new RecordSymbol(node, CurrentModule, CurrentScope) { Scope = new TypeScope(CurrentScope) { GenericNames = node.GenericParameters.Select(g => g.Name).ToHashSet() } };
 
         foreach (var decl in node.Declarations)
         {
@@ -107,7 +107,7 @@ public class TypeLookup : AstVisitor
     }
     protected override void VisitAnnotationDecl(AnnotationDeclarationNode node)
     {
-        var symbol = new AnnotationSymbol(node, CurrentModule, CurrentScope) { Scope = new TypeScope(CurrentScope) };
+        var symbol = new AnnotationSymbol(node, CurrentModule, CurrentScope) { Scope = new TypeScope(CurrentScope) { GenericNames = node.GenericParameters.Select(g => g.Name).ToHashSet() } };
 
         foreach (var decl in node.Declarations)
         {

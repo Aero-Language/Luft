@@ -1,34 +1,37 @@
-using Luft.Ast;
 using Luft.Ast.Nodes;
 using Luft.Utility;
 
 namespace Luft.TypeChecker.Symbols;
 
-public sealed class ClassSymbol(ClassDeclarationNode node, ModuleSymbol module, TypeScope? containing)
-    : TypeSymbol(node.Name, node.AccessMod, module, containing, node.Span)
+public sealed class ClassSymbol : TypeSymbol
 {
-    public InheritanceMod InheritanceMod { get; init; } = node.InheritanceMod;
-    // Raw AeroTypes from `: A, B, C` - which one (if any) is the base class vs. a trait
-    // is sorted out during linking, once every type in the table is known.
-    public ValueList<AeroType> Implements { get; init; } = node.Implements;
+    public ClassSymbol(ClassDeclarationNode node, ModuleSymbol module, TypeScope? containing) : base(node.Name,
+        node.AccessMod, module, containing, node.Span)
+    {
+        Node = node;
+        GenericParameters = node.GenericParameters;
+    }
+    
+    public ClassDeclarationNode Node { get; }
 }
 
 public sealed class StructSymbol(StructDeclarationNode node, ModuleSymbol module, TypeScope? containing)
-    : TypeSymbol(node.Name, node.AccessMod, module, containing, node.Span)
+    : TypeSymbol(node.Name,
+        node.AccessMod, module, containing, node.Span)
 {
-    public ValueList<AeroType> Implements { get; init; } = node.Implements;
+    public StructDeclarationNode Node { get; } = node;
 }
 
 public sealed class TraitSymbol(TraitDeclarationNode node, ModuleSymbol module, TypeScope? containing)
     : TypeSymbol(node.Name, node.AccessMod, module, containing, node.Span)
 {
-    public ValueList<AeroType> Traits { get; init; } = node.Traits; // traits this trait itself extends
+    public TraitDeclarationNode Node { get; } = node;
 }
 
 public sealed class RecordSymbol(RecordDeclarationNode node, ModuleSymbol module, TypeScope? containing)
     : TypeSymbol(node.Name, node.AccessMod, module, containing, node.Span)
 {
-    public ValueList<AeroType> Implements { get; init; } = node.Implements;
+    public RecordDeclarationNode Node { get; } = node;
 }
 
 public sealed class AnnotationSymbol(AnnotationDeclarationNode node, ModuleSymbol module, TypeScope? containing)

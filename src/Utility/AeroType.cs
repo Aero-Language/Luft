@@ -48,8 +48,8 @@ public sealed record GenericType(AeroType Definition, ValueList<GenericParameter
 /// <summary>
 /// Represents a generic parameter placeholder with an optional constraint, e.g., T : Comparable.
 /// </summary>
-public sealed record GenericParameterType(string ParameterName, AeroType? Constraint = null, bool IsRef = false, bool IsNullable = false) 
-    : AeroType(ParameterName, IsRef, IsNullable)
+public sealed record GenericParameterType(string Name, AeroType? Constraint = null, bool IsRef = false, bool IsNullable = false) 
+    : AeroType(Name, IsRef, IsNullable)
 {
     public override string ToString() => Constraint is null ? Name : $"{Name}: {Constraint}";
 }

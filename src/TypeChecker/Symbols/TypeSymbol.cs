@@ -8,12 +8,11 @@ public abstract class TypeSymbol(string name, AccessMod access, ModuleSymbol mod
     public string Name { get; } = name;
     public AccessMod Access { get; } = access;
     public ModuleSymbol Module { get; } = module;
-    public SourceSpan Span { get; } = span; // for spans/diagnostics, and LSP go-to-definition later
-
+    public SourceSpan Span { get; } = span;
     public ValueList<GenericParameterType> GenericParameters { get; init; } = ValueList<GenericParameterType>.Empty;
 
     public TypeScope Scope { get; init; } = new TypeScope(containing);
-
-
     public SymbolSignature Signature => new(Name, GenericParameters, []);
 }
+
+file class ErrorSymbol() : TypeSymbol("", AccessMod.Private, null!, null!, null!);

@@ -1,13 +1,11 @@
-namespace Luft.Utility;
+/*namespace Luft.Utility;
 
-public abstract class SafeCollectionIterator<TItem, TSource> : AeroThrower<TSource>
+public abstract class SafeCollectionIterator<TItem> : AeroThrower
 {
-    
-    
     protected int ItemIndex { get; set; }
 
     protected TItem[] RawItems { get; set; } = [];
-    private Func<TItem, int, TSource> GetSource { get; set; }
+    private Func<TItem, int, SourceSpan> GetSource { get; set; } = (_, _) => SourceSpan.Unknown;
     private Func<TItem, (int index, int max), bool> IsCollectionEnd { get; set; } = (_, _) => false;
     
     private Func<TItem, bool> Filter { get; set; } = _ => true; 
@@ -19,7 +17,7 @@ public abstract class SafeCollectionIterator<TItem, TSource> : AeroThrower<TSour
     /// <param name="isCollectionEnd">Indicates when a collection ends</param>
     /// <param name="filter">Whitelist filter | true = keeps the item</param>
     /// <param name="exceptionFactory">A factory that produces custom exceptions</param>
-    protected void Init(Func<TItem, int, TSource> getSource, Func<TItem, (int index, int max), bool> isCollectionEnd, Func<TItem, bool>? filter = null, Func<TSource, string, Exception>? exceptionFactory = null)
+    protected void Init(Func<TItem, int, SourceSpan> getSource, Func<TItem, (int index, int max), bool> isCollectionEnd, Func<TItem, bool>? filter = null, Func<SourceSpan, string, Exception>? exceptionFactory = null)
     {
         GetSource = getSource;
         IsCollectionEnd = isCollectionEnd;
@@ -34,21 +32,21 @@ public abstract class SafeCollectionIterator<TItem, TSource> : AeroThrower<TSour
         Items = RawItems.Where(Filter).ToArray();
     }
 
-    protected TItem Expect(Func<TItem, bool> condition, string errorMessage, TSource? location, bool doConsume = true)
+    protected TItem Expect(Func<TItem, bool> condition, string errorMessage, SourceSpan? location, bool doConsume = true)
     {
-        var currentToken = Peek();
-        if (!condition(currentToken))
+        var currentItem = Peek();
+        if (!condition(currentItem))
         {
-            Error(errorMessage, location ?? GetSource(currentToken, ItemIndex));
+            Error(errorMessage, location ?? GetSource(ItemIndex));
 
-            if (!IsCollectionEnd(currentToken, (ItemIndex, Items.Length)))
+            if (!IsCollectionEnd(currentItem, (ItemIndex, Items.Length)))
             {
                 Consume(); 
             }
-            return currentToken;
+            return currentItem;
         }
         
-        return doConsume ? Consume() : currentToken;
+        return doConsume ? Consume() : currentItem;
     }
     protected TItem Peek(int offset = 0) => ItemIndex + offset < Items.Length ? Items[ItemIndex + offset] : Items.Last();
     protected TItem Consume(int amount = 1)
@@ -57,4 +55,4 @@ public abstract class SafeCollectionIterator<TItem, TSource> : AeroThrower<TSour
         ItemIndex += amount;
         return token;
     }
-}
+}*/

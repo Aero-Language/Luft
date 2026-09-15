@@ -2,7 +2,7 @@
 
 namespace Luft.Ast.Nodes;
 
-public abstract class AstVisitor : AeroThrower<SourceSpan>
+public abstract class AstVisitor : AeroThrower
 {
     protected void Visit(AstNode node)
     {
@@ -64,7 +64,7 @@ public abstract class AstVisitor : AeroThrower<SourceSpan>
             case ScopedExpressionNode n: VisitScoped(n); break;
             
             default: Default(node); break;
-        };
+        }
     }
     
     
@@ -128,7 +128,7 @@ public abstract class AstVisitor : AeroThrower<SourceSpan>
     protected virtual void VisitScoped(ScopedExpressionNode node) => Default(node);
 }
 
-public abstract class AstVisitor<T> : AeroThrower<SourceSpan>
+public abstract class AstVisitor<T> : AeroThrower
 {
     protected T Visit(AstNode node) => node switch
     {

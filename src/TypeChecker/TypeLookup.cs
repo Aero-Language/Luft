@@ -18,6 +18,9 @@ public class TypeLookup : AstVisitor
         
         foreach (var file in ownFiles)
         {
+            if (Table.ImportsByFile.TryGetValue(file.Span.FilePath, out var list)) list.AddRange(file.Imports);
+            else Table.ImportsByFile.Add(file.Span.FilePath, file.Imports.ToList());
+            
             foreach (var module in file.Modules) Visit(module);
         }
         

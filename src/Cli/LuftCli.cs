@@ -26,10 +26,6 @@ public static class LuftCli
 
     static void Build(Flag[] flags, string[] values)
     {
-        // var builder = new AeroBuilder();
-        // ToDo: Implement after compiler
-        
-        
         // * Temporary *
         var error = (Exception e) =>
         {
@@ -62,12 +58,15 @@ public static class LuftCli
         }
         
         var lookup = new TypeLookup();
-        var resolver = new TypeResolver();
+        var typeResolver = new TypeResolver();
+        var bodyResolver = new BodyResolver();
         lookup.OnError += error;
-        resolver.OnError += error;
+        typeResolver.OnError += error;
+        bodyResolver.OnError += error;
         
         var table = lookup.Run(files.ToArray(), []);
-        resolver.Run(table);
+        typeResolver.Run(table);
+        bodyResolver.Run(table);
     }
     
     static void Run(Flag[] flags, string[] values)

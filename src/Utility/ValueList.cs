@@ -23,6 +23,7 @@ public class ValueList<T> : IReadOnlyList<T>, IEquatable<ValueList<T>>
     public void Add(T item) => _items = [.. _items, item];
     
     public T this[int index] => _items[index];
+    public ValueList<T> this[Range range] => _items[range].ToValueList();
 
     public int Count => _items.Length;
 

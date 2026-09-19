@@ -12,18 +12,15 @@ public enum MemberMod
 
 public static class MemberModExtensions
 {
-    public static string? AsString(this MemberMod mod)
+    public static string AsString(this MemberMod mod)
     {
-        if (mod == MemberMod.None) return null;
-        
         List<string> mods = [];
-
-        switch (mod)
-        {
-            case MemberMod.Partial: mods.Add("partial"); break;
-            case MemberMod.Static: mods.Add("static"); break;
-            case MemberMod.Unsafe: mods.Add("unsafe"); break;
-        }
+        
+        if (mod.HasFlag(MemberMod.None))    return "";
+        if (mod.HasFlag(MemberMod.Static))  mods.Add("static");
+        if (mod.HasFlag(MemberMod.Weak))    mods.Add("weak");
+        if (mod.HasFlag(MemberMod.Partial)) mods.Add("partial");
+        if (mod.HasFlag(MemberMod.Unsafe))  mods.Add("unsafe");
         
         return string.Join(" ", mods);
     }

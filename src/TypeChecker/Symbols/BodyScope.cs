@@ -19,15 +19,9 @@ public class BodyScope(BodyScope? parent = null)
 
     public VariableSymbol? Get(string name)
     {
-        var scope = this;
-        VariableSymbol? result = null;
-        while (scope is not null)
-        {
-            if (scope.Variables.TryGetValue(name, out var variable)) result = variable;
-            scope = scope.Parent;
-        }
-        
-        return result;
+        for (var scope = this; scope is not null; scope = scope.Parent)
+            if (scope.Variables.TryGetValue(name, out var variable)) return variable;
+        return null;
     }
 
     public void Set(string name, VariableSymbol variable)

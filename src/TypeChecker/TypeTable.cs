@@ -14,7 +14,8 @@ public sealed class TypeTable
         AeroType.Bool,
         AeroType.Int,
         AeroType.Float,
-        AeroType.Void
+        AeroType.Void,
+        AeroType.Range,
     ];
     
     public Dictionary<string, ModuleSymbol> Modules { get; } = new();

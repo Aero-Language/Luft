@@ -1,4 +1,3 @@
-using Luft.Ast.Nodes;
 using Luft.TypeChecker.Symbols;
 using Luft.Utility;
 
@@ -29,12 +28,8 @@ public sealed class TypeResolver : AeroThrower
 
     private void CheckFields(List<FieldSymbol> fields, TypeScope scope)
     {
-        var dupes = fields
-            .GroupBy(p => p.Signature)
-            .Where(g => g.Count() > 1)
-            .SelectMany(g => g);
-        
-        foreach (var dupe in dupes) Error("A property with the same Signature was already declared.", dupe.Declaration.Span);
+        CheckDupes(fields);
+
         foreach (var field in fields)
         {
             CheckType(field.Type, scope, field.Declaration.Span);
@@ -42,22 +37,14 @@ public sealed class TypeResolver : AeroThrower
     }
     private void CheckProperties(List<PropertySymbol> properties, TypeScope scope)
     {
-        var dupes = properties
-            .GroupBy(p => p.Signature)
-            .Where(g => g.Count() > 1)
-            .SelectMany(g => g);
-        foreach (var dupe in dupes) Error("A property with the same Signature was already declared.", dupe.Declaration.Span);
-        
+        CheckDupes(properties);
+
         foreach (var property in properties.Where(p => p.ExtensionTarget is not null)) Error("Properties mustn't have a target Type.", property.Declaration.Span);
         foreach (var property in properties) CheckType(property.Type, scope, property.Declaration.Span);
     }
     private void CheckExtensionProperties(List<PropertySymbol> properties, TypeScope scope)
     {
-        var dupes = properties
-            .GroupBy(p => p.Signature)
-            .Where(g => g.Count() > 1)
-            .SelectMany(g => g);
-        foreach (var dupe in dupes) Error("A property with the same Signature was already declared.", dupe.Declaration.Span);
+        CheckDupes(properties);
         
         foreach (var property in properties.Where(p => p.ExtensionTarget is null)) Error("Extension properties must have a target Type.", property.Declaration.Span);
         foreach (var property in properties)
@@ -68,11 +55,7 @@ public sealed class TypeResolver : AeroThrower
     }
     private void CheckFunctions(List<FunctionSymbol> functions, TypeScope scope)
     {
-        var dupes = functions
-            .GroupBy(p => p.Signature)
-            .Where(g => g.Count() > 1)
-            .SelectMany(g => g);
-        foreach (var dupe in dupes) Error("A function with the same Signature was already declared.", dupe.Declaration.Span);
+        CheckDupes(functions);
         
         foreach (var function in functions.Where(p => p.ExtensionTarget is not null)) Error("Functions mustn't have a target Type.", function.Declaration.Span);
         foreach (var function in functions)
@@ -86,11 +69,7 @@ public sealed class TypeResolver : AeroThrower
     }
     private void CheckExtensionFunctions(List<FunctionSymbol> functions, TypeScope scope)
     {
-        var dupes = functions
-            .GroupBy(p => p.Signature)
-            .Where(g => g.Count() > 1)
-            .SelectMany(g => g);
-        foreach (var dupe in dupes) Error("A function with the same Signature was already declared.", dupe.Declaration.Span);
+        CheckDupes(functions);
         
         foreach (var function in functions.Where(p => p.ExtensionTarget is null)) Error("Extension functions must have a target Type.", function.Declaration.Span);
         foreach (var function in functions)
@@ -104,6 +83,8 @@ public sealed class TypeResolver : AeroThrower
     }
     private void CheckTypeSymbol(List<TypeSymbol> types)
     {
+        CheckDupes(types);
+
         foreach (var symbol in types)
         {
             CheckInheritance(symbol);
@@ -136,16 +117,16 @@ public sealed class TypeResolver : AeroThrower
         }
     }
 
-
+    private void CheckDupes<T>(List<T> elements) where T : SourceSymbol, ISignature
+    {
+        var dupes = elements
+            .GroupBy(p => p.Signature)
+            .Where(g => g.Count() > 1)
+            .SelectMany(g => g).Skip(1);
+        foreach (var dupe in dupes) Error("A type with the same Signature was already declared.", dupe.Span);
+    }
     #region Checkers
 
-    private void CheckBody(BlockExpressionNode body, TypeScope scope, HashSet<string>? memberGenerics = null)
-    {
-        foreach (var statement in body.Statements)
-        {
-            // ToDo: Think about it
-        }
-    }
     private void CheckInheritance(TypeSymbol symbol)
     {
         switch (symbol)

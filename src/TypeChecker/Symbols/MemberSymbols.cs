@@ -4,7 +4,7 @@ using Luft.Utility;
 
 namespace Luft.TypeChecker.Symbols;
 
-public sealed class FunctionSymbol(string name, AccessMod access, ModuleSymbol module, FunctionDeclarationNode declaration) : ISignature
+public sealed class FunctionSymbol(string name, AccessMod access, ModuleSymbol module, FunctionDeclarationNode declaration) : SourceSymbol(declaration.Span), ISignature
 {
     public string Name { get; } = name;
     public AccessMod Access { get; } = access;
@@ -29,7 +29,7 @@ public sealed class FunctionSymbol(string name, AccessMod access, ModuleSymbol m
 
 public sealed record ParamSymbol(string Name, AeroType Type, VariableKind VarKind, ExpressionNode? Initializer);
 
-public sealed class PropertySymbol(string name, AccessMod access, PropertyDeclarationNode declaration)
+public sealed class PropertySymbol(string name, AccessMod access, PropertyDeclarationNode declaration) : SourceSymbol(declaration.Span), ISignature
 {
     public string Name { get; } = name;
     public AccessMod Access { get; } = access;
@@ -45,7 +45,7 @@ public sealed class PropertySymbol(string name, AccessMod access, PropertyDeclar
     public SymbolSignature Signature => new(Name, [], []);
 }
 
-public sealed class FieldSymbol(string name, AccessMod access, FieldDeclarationNode declaration)
+public sealed class FieldSymbol(string name, AccessMod access, FieldDeclarationNode declaration) : SourceSymbol(declaration.Span), ISignature
 {
     public string Name { get; } = name;
     public AccessMod Access { get; } = access;
@@ -59,7 +59,7 @@ public sealed class FieldSymbol(string name, AccessMod access, FieldDeclarationN
     public SymbolSignature Signature => new(Name, [], []);
 }
 
-public sealed class ConstructorSymbol(AccessMod access, ConstructorDeclarationNode declaration) : ISignature
+public sealed class ConstructorSymbol(AccessMod access, ConstructorDeclarationNode declaration) : SourceSymbol(declaration.Span), ISignature
 {
     public AccessMod Access { get; } = access;
     public ConstructorDeclarationNode Declaration { get; } = declaration;
@@ -67,11 +67,13 @@ public sealed class ConstructorSymbol(AccessMod access, ConstructorDeclarationNo
     public BlockExpressionNode? Body => Declaration.Body;
     
     
-    public SymbolSignature Signature => new("", [], Parameters);
+    public SymbolSignature Signature => new($"<constructor>{Declaration.Name}", [], Parameters);
 }
 
-public sealed class DestructorSymbol(DestructorDeclarationNode declaration)
+public sealed class DestructorSymbol(DestructorDeclarationNode declaration) : SourceSymbol(declaration.Span), ISignature
 {
     public DestructorDeclarationNode Declaration { get; } = declaration;
     public BlockExpressionNode? Body => Declaration.Body;
+    
+    public SymbolSignature Signature => new($"<destructor>{Declaration.Name}", [], []);
 }

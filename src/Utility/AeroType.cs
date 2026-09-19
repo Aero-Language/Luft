@@ -17,7 +17,9 @@ public abstract record AeroType(string Name, bool IsRef = false, bool IsNullable
     public static readonly AeroType String = new ScalarType("String");
     public static readonly AeroType Bool = new ScalarType("Bool");
     public static readonly AeroType Byte = new ScalarType("Byte");
+    public static readonly AeroType Range = new ScalarType("Range");
 
+    public static readonly AeroType Null = new SpecialType("<null>");
     public static readonly AeroType Auto = new SpecialType("<auto>");
     public static readonly AeroType Error = new SpecialType("<error>");
 }

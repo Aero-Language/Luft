@@ -39,7 +39,7 @@ module AeroTests.ComprehensiveTest {
     public trait TUpdatable {
         fun Update(deltaTime: Float) -> Void 
     }
-
+    
     public struct Vector2(var X: Float, var Y: Float) : TSerializable {
         public impl fun Serialize() -> String {
             return $"\{ X: {X}|Y: {Y} \}"

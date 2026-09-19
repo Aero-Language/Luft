@@ -12,6 +12,7 @@ public sealed class TypeScope(TypeScope? containing)
     public Dictionary<string, List<PropertySymbol>> Properties { get; } = new();
     public Dictionary<string, List<FieldSymbol>> Fields { get; } = new();
     
+    // ToDo: Extensions should be checked if their signature is already a member of the target
     public Dictionary<string, List<FunctionSymbol>> ExtensionFunctions { get; } = new();
     public Dictionary<string, List<PropertySymbol>> ExtensionProperties { get; } = new();
     

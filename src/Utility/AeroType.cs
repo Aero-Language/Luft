@@ -62,6 +62,12 @@ public sealed record LambdaType(ValueList<TypeParam> Parameters, AeroType Return
     public override string ToString() => $"({string.Join(", ", Parameters)}) -> {ReturnType}";
 }
 
+public sealed record LambdaCollectionType(string Name, ValueList<LambdaType> Lambdas)
+    : AeroType(Name, false, false)
+{
+    public override string ToString() => Name;
+}
+
 public sealed record TypeParam(string Name, AeroType Type)
 {
     public override string ToString() => $"{Name}: {Type}";

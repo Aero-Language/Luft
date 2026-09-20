@@ -274,19 +274,15 @@ public class BodyResolver : AeroThrower
     {
         var name = expr.Name;
         var file = expr.Span.FilePath;
-
-        // 1. Locals
+        
         if (bScope.Get(name) is { } local) return new ValueRes(local.Type);
-
-        // 2. Members and types, walking outwards (class scope -> module scope)
+        
         for (var s = scope; s is not null; s = s.ContainingScope)
             if (LookupInScope(s, name) is { } found) return found;
-
-        // 3. Imported modules
+        
         foreach (var module in ImportedModules(file, name))
             if (LookupInScope(module.Scope, name) is { } imported) return imported;
-
-        // 4. Module names: 'System' after 'import Core.System', or the start of a path like 'Core'
+        
         foreach (var import in ImportsOf(file))
             if (import.Imports.Count == 0 && import.TargetPath.Split('.')[^1] == name)
                 return new ModuleRes(import.TargetPath);
@@ -304,6 +300,45 @@ public class BodyResolver : AeroThrower
         }
 
         var name = member.Name;
+        var target = ResolveName(expr.Target, scope, bScope); // recurse on Target only
+
+        switch (target)
+        {
+            case ModuleRes m:
+            {
+                if (Table.Modules.TryGetValue(m.Path, out var module)
+                    && LookupInScope(module.Scope, name) is { } inModule)
+                    return inModule;
+
+                var deeper = $"{m.Path}.{name}";
+                if (IsModulePath(deeper)) return new ModuleRes(deeper);
+
+                Error($"Module '{m.Path}' has no member '{name}'", expr.Span);
+                return Failed;
+            }
+            case TypeRes t:
+                return Access(t.Symbol, name, wantStatic: true, expr.Span);
+
+            case ValueRes v:
+            {
+                var symbol = FindType(v.Type, scope, expr.Span.FilePath);
+                if (symbol is null)
+                {
+                    Error($"Cannot access members of type '{v.Type}'", expr.Span);
+                    return Failed;
+                }
+                return Access(symbol, name, wantStatic: false, expr.Span);
+            }
+            case FunctionsRes:
+                Error("Cannot access members of a function", expr.Span);
+                return Failed;
+
+            default: // ErrorRes: already reported
+                return Failed;
+        }
+    }
+    private Resolved ResolveCall(CallExpressionNode expr, TypeScope scope, BodyScope bScope)
+    {
         var target = ResolveName(expr.Target, scope, bScope); // recurse on Target only
 
         switch (target)
@@ -464,8 +499,6 @@ public class BodyResolver : AeroThrower
         }
         return member.Result;
     }
-
-    // Used when an expression must be a VALUE (not a type, module or function group)
     private AeroType ToValue(Resolved resolved, SourceSpan span)
     {
         switch (resolved)

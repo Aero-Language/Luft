@@ -90,4 +90,4 @@ Requires the **.NET 10** SDK.
 
 ## License
 
-Unlicensed / not yet decided.
+The Luft compiler is Open-Source under the [MIT License](LICENSE)

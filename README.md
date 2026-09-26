@@ -84,9 +84,9 @@ Requires the **.NET 10** SDK.
 
 ## Repositories
 
-- [`Luft`](https://github.com/Aero-Language) — this compiler toolchain
-- `Acli` — shared CLI framework
-- `Aero-Docs` — language documentation (not actively kept in sync during rapid development)
+- [`Luft`](https://github.com/Aero-Language/Luft) — this compiler toolchain
+- [`Acli`](https://github.com/Aero-Language/Acli) — shared CLI framework
+- [`Aero-Docs`](https://github.com/Aero-Language/Aero-Docs) — language documentation (not actively kept in sync during rapid development)
 
 ## License
 

@@ -384,6 +384,7 @@ public sealed class Tokenizer : SafeIterator<char>
             ('>', '=') => TokenType.GreaterThanEqual,
             ('&', '&') => TokenType.LogicalAnd,
             ('|', '|') => TokenType.LogicalOr,
+            ('^', '^') => TokenType.LogicalXor,
             ('+', '+') => TokenType.Increment,
             ('-', '-') => TokenType.Decrement,
             ('+', '=') => TokenType.AddAssign,
@@ -467,7 +468,7 @@ public sealed class Tokenizer : SafeIterator<char>
         "public" or "internal" or "protected" or "private" => TokenType.AccessModifierKind,
         "static" or "weak" or "partial" or "unsafe" => TokenType.MemberModifierKind,
         "virtual" or "abstract" or "sealed" or "impl" =>  TokenType.InheritanceModifierKind,
-        "struct" or "record" or "class" or "fun" or "enum" or "trait" or "extension" or "extensions" or "annotation" or "constructor" or "destructor" => TokenType.InstanceKind,
+        "struct" or "record" or "class" or "fun" or "enum" or "trait" or "extension" or "extensions" or "annotation" or "constructor" or "destructor" or "op" => TokenType.InstanceKind,
 
         // Control Flow
         "if" => TokenType.IfKeyword,

@@ -1,4 +1,6 @@
+module EasyTest
+
 public fun DoSomething(baseValue: Int) {
     val mult: Int = 10
-    System.Log(baseValue * mult)
+    DoSomething(baseValue * mult)
 }

@@ -67,6 +67,7 @@ public enum TokenType
     GreaterThanEqual,
     LogicalAnd,
     LogicalOr,
+    LogicalXor,
     Increment,
     Decrement,
     AddAssign,

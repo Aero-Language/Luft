@@ -16,6 +16,20 @@ public record FunctionDeclarationNode
     SourceSpan Span
 ) : DeclarationNode(Span);
 
+public record OperatorDeclarationNode
+(
+    ValueList<AnnotationStatementNode> Annotations,
+    AccessMod AccessMod,
+    InheritanceMod InheritanceMod,
+    MemberMod MemberMods,
+    AeroType ReturnType,
+    string Name,
+    Operator Op,
+    ValueList<ParamNode> Parameters,
+    BlockExpressionNode? Body,
+    SourceSpan Span
+) : DeclarationNode(Span);
+
 public record ExtensionDeclarationNode
 (
     DeclarationNode Extension,

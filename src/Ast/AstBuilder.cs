@@ -143,16 +143,18 @@ public sealed class AstBuilder : SafeIterator<Token>
         
         return new ModuleDeclarationNode(identifier, decls.ToArray(), Peek().Span);
     }
-    FunctionDeclarationNode PopFunction(ValueList<AnnotationStatementNode>? annotations, AccessMod? accessMod, MemberMod memberMod, InheritanceMod inheritance)
+    DeclarationNode PopFunction(ValueList<AnnotationStatementNode>? annotations, AccessMod? accessMod, MemberMod memberMod, InheritanceMod inheritance)
     {
         var startSpan = Peek().Span;
         var access = accessMod ?? AccessModExtensions.FunctionDefault;
 
         if (Peek().Type is TokenType.InstanceKind && Peek().Value == "extension") Pop(); // Pop 'extension' 
+        bool isOp = Peek().Type is TokenType.InstanceKind && Peek().Value == "op";
         ExpectInstance(["fun"], "Expected 'fun' keyword");
         
         var name = PopIdentifier();
-        var generics = PopGenericDecls();
+        var opString = isOp ? name.IdentifierParts().Last() : "";
+        var generics = !isOp ? PopGenericDecls() : []; // Only pop the generics if it's not an operator overload    
         var parameters = PopParameterDecl();
 
         var returning = AeroType.Void;
@@ -171,17 +173,24 @@ public sealed class AstBuilder : SafeIterator<Token>
         {
             PopStatementTerminator();
         }
-        
+
+        if (isOp) return new OperatorDeclarationNode(annotations.OrNew(), access, inheritance, memberMod, returning, name, opString.ToOperator(), parameters, body, startSpan.To(Peek().Span.End));
         return new FunctionDeclarationNode(annotations.OrNew(), access, inheritance, memberMod, returning, name, generics.ToValueList(), parameters, body, startSpan.To(Peek().Span.End));
     }
     ExtensionDeclarationNode PopExtension(ValueList<AnnotationStatementNode>? annotations, AccessMod? accessMod, MemberMod memberMod, InheritanceMod inheritance)
     {
         string targetType;
         DeclarationNode decl;
-        var kind = Peek(1);
-        if (kind.Type is TokenType.InstanceKind && kind.Value == "fun") // Peek() is 'extension', so check the next one
+        var kind = Peek(1); // Peek() is 'extension', so check the next one
+        if (kind.Type is TokenType.InstanceKind && kind.Value == "fun") 
         {
-            var node = PopFunction(annotations, accessMod, memberMod, inheritance);
+            var node = (FunctionDeclarationNode)PopFunction(annotations, accessMod, memberMod, inheritance);
+            decl = node;
+            targetType = node.Name.FirstIdentifier();
+        }
+        else if (kind.Type is TokenType.InstanceKind && kind.Value == "op")
+        {
+            var node = (OperatorDeclarationNode)PopFunction(annotations, accessMod, memberMod, inheritance);
             decl = node;
             targetType = node.Name.FirstIdentifier();
         }

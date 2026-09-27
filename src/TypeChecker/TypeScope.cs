@@ -1,4 +1,5 @@
 using Luft.TypeChecker.Symbols;
+using Luft.Utility;
 
 namespace Luft.TypeChecker;
 
@@ -15,6 +16,12 @@ public sealed class TypeScope(TypeScope? containing)
     // ToDo: Extensions should be checked if their signature is already a member of the target
     public Dictionary<string, List<FunctionSymbol>> ExtensionFunctions { get; } = new();
     public Dictionary<string, List<PropertySymbol>> ExtensionProperties { get; } = new();
+
+    // Operator overloads declared directly on this type (`operator fun Add(...)` etc.), keyed
+    // by the Operator they overload rather than by name — operators don't have one. Multiple
+    // overloads of the same operator (different arity/parameter types) share a key, same as
+    // overloaded Functions share a name.
+    public Dictionary<Operator, List<OperatorSymbol>> Operators { get; } = new();
     
     public HashSet<string> GenericNames { get; init; } = new();
     

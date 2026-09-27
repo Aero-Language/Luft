@@ -38,15 +38,17 @@ public class TypeLookup : AstVisitor
             Visit(decl);
         }
     }
-    private void AddOverloadable<TValue>(Dictionary<string, List<TValue>> dict, string name, TValue symbol)
+    // TKey is generic (rather than always 'string') so the same overload-collecting logic works
+    // for both name-keyed tables (Functions, Properties, ...) and the Operator-keyed Operators table.
+    private void AddOverloadable<TKey, TValue>(Dictionary<TKey, List<TValue>> dict, TKey key, TValue symbol) where TKey : notnull
     {
-        if (dict.ContainsKey(name))
+        if (dict.ContainsKey(key))
         {
-            dict[name].Add(symbol);
+            dict[key].Add(symbol);
         }
         else
         {
-            dict.Add(name, [symbol]);
+            dict.Add(key, [symbol]);
         }
     }
     private void AddType(string name, TypeSymbol symbol) => AddOverloadable(CurrentScope.Types, name, symbol);
@@ -141,6 +143,10 @@ public class TypeLookup : AstVisitor
     protected override void VisitFunction(FunctionDeclarationNode node)
     {
         AddOverloadable(CurrentScope.Functions, node.Name, new FunctionSymbol(node.Name, node.AccessMod, CurrentModule, node));
+    }
+    protected override void VisitOperator(OperatorDeclarationNode node)
+    {
+        AddOverloadable(CurrentScope.Operators, node.Op, new OperatorSymbol(node.Op, node.AccessMod, CurrentModule, node));
     }
     protected override void VisitProperty(PropertyDeclarationNode node)
     {

@@ -19,27 +19,49 @@ public sealed class StructSymbol(StructDeclarationNode node, ModuleSymbol module
     : TypeSymbol(node.Name,
         node.AccessMod, module, containing, node.Span)
 {
+    // No GenericParameters to wire here: StructDeclarationNode has no generic parameter list —
+    // structs aren't generic in the grammar, unlike class/record/trait/annotation.
     public StructDeclarationNode Node { get; } = node;
 }
 
-public sealed class TraitSymbol(TraitDeclarationNode node, ModuleSymbol module, TypeScope? containing)
-    : TypeSymbol(node.Name, node.AccessMod, module, containing, node.Span)
+public sealed class TraitSymbol : TypeSymbol
 {
-    public TraitDeclarationNode Node { get; } = node;
+    public TraitSymbol(TraitDeclarationNode node, ModuleSymbol module, TypeScope? containing) : base(node.Name,
+        node.AccessMod, module, containing, node.Span)
+    {
+        Node = node;
+        GenericParameters = node.GenericParameters;
+    }
+
+    public TraitDeclarationNode Node { get; }
 }
 
-public sealed class RecordSymbol(RecordDeclarationNode node, ModuleSymbol module, TypeScope? containing)
-    : TypeSymbol(node.Name, node.AccessMod, module, containing, node.Span)
+public sealed class RecordSymbol : TypeSymbol
 {
-    public RecordDeclarationNode Node { get; } = node;
+    public RecordSymbol(RecordDeclarationNode node, ModuleSymbol module, TypeScope? containing) : base(node.Name,
+        node.AccessMod, module, containing, node.Span)
+    {
+        Node = node;
+        GenericParameters = node.GenericParameters;
+    }
+
+    public RecordDeclarationNode Node { get; }
 }
 
-public sealed class AnnotationSymbol(AnnotationDeclarationNode node, ModuleSymbol module, TypeScope? containing)
-    : TypeSymbol(node.Name, node.AccessMod, module, containing, node.Span);
+public sealed class AnnotationSymbol : TypeSymbol
+{
+    public AnnotationSymbol(AnnotationDeclarationNode node, ModuleSymbol module, TypeScope? containing) : base(node.Name,
+        node.AccessMod, module, containing, node.Span)
+    {
+        GenericParameters = node.GenericParameters;
+    }
+}
 
 public sealed class EnumSymbol(EnumDeclarationNode node, ModuleSymbol module, TypeScope? containing)
     : TypeSymbol(node.Name, node.AccessMod, module, containing, node.Span)
 {
+    // Enums can't have generic parameters at all (TypeResolver.CheckTypeSymbol errors if they
+    // do), so GenericParameters correctly stays at its Empty default here.
     public bool IsEnumClass => node.IsEnumClass;
     public AeroType? MemberType => node.MemberType;
     public ValueList<ParamSymbol> Parameters => node.Parameters?.Select(p => new ParamSymbol(p.Name, p.Type, p.VarKind, p.Initializer))?.ToValueList() ?? [];

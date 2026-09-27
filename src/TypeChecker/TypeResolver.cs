@@ -23,6 +23,7 @@ public sealed class TypeResolver : AeroThrower
         foreach (var extensionProperties in scope.ExtensionProperties.Values) CheckExtensionProperties(extensionProperties, scope);
         foreach (var functions in scope.Functions.Values) CheckFunctions(functions, scope);
         foreach (var extensionFunctions in scope.ExtensionFunctions.Values) CheckExtensionFunctions(extensionFunctions, scope);
+        foreach (var operators in scope.Operators.Values) CheckOperators(operators, scope);
         foreach (var typeSymbol in scope.Types.Values) CheckTypeSymbol(typeSymbol);
     }
 
@@ -79,6 +80,18 @@ public sealed class TypeResolver : AeroThrower
             foreach (var generic in function.GenericParameters) CheckType(generic, scope, function.Declaration.Span);
             CheckType(function.ReturnType, scope, function.Declaration.Span, generics);
             foreach (var param in function.Parameters) CheckType(param.Type, scope, function.Declaration.Span, generics);
+        }
+    }
+    // Operators have no generic parameters of their own (unlike Functions), so this is the
+    // slimmed-down version of CheckFunctions: just validate the return type and each parameter.
+    private void CheckOperators(List<OperatorSymbol> operators, TypeScope scope)
+    {
+        CheckDupes(operators);
+
+        foreach (var op in operators)
+        {
+            CheckType(op.ReturnType, scope, op.Declaration.Span);
+            foreach (var param in op.Parameters) CheckType(param.Type, scope, op.Declaration.Span);
         }
     }
     private void CheckTypeSymbol(List<TypeSymbol> types)

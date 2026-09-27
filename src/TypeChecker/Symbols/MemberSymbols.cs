@@ -29,6 +29,31 @@ public sealed class FunctionSymbol(string name, AccessMod access, ModuleSymbol m
 
 public sealed record ParamSymbol(string Name, AeroType Type, VariableKind VarKind, ExpressionNode? Initializer);
 
+// An `operator fun` declaration — overloads a specific Operator rather than being named. Arity
+// distinguishes binary overloads (one parameter, the right-hand operand) from unary overloads
+// (zero parameters); BodyResolver's ParametersMatch/FindOperatorOverload pick between them.
+public sealed class OperatorSymbol(Operator op, AccessMod access, ModuleSymbol module, OperatorDeclarationNode declaration) : SourceSymbol(declaration.Span), ISignature
+{
+    public Operator Op { get; } = op;
+    public AccessMod Access { get; } = access;
+    public ModuleSymbol Module { get; } = module;
+    public OperatorDeclarationNode Declaration { get; } = declaration;
+
+    public MemberMod MemberMods => Declaration.MemberMods;
+    public InheritanceMod InheritanceMod => Declaration.InheritanceMod;
+
+    public ValueList<ParamSymbol> Parameters => Declaration.Parameters
+        .Select(p => new ParamSymbol(p.Name, p.Type, p.VarKind, p.Initializer)).ToValueList();
+
+    public AeroType ReturnType => Declaration.ReturnType;
+    public BlockExpressionNode? Body => Declaration.Body;
+
+    // Operators aren't named, so the signature is keyed by the Operator itself; two overloads
+    // of the same operator still collide here if their parameter lists also match (CheckDupes
+    // in TypeResolver uses this to flag that).
+    public SymbolSignature Signature => new($"<operator>{Op}", [], Parameters);
+}
+
 public sealed class PropertySymbol(string name, AccessMod access, PropertyDeclarationNode declaration) : SourceSymbol(declaration.Span), ISignature
 {
     public string Name { get; } = name;

@@ -27,12 +27,12 @@ public static class LuftCli
     static void Build(Flag[] flags, string[] values)
     {
         // * Temporary *
-        var error = (Exception e) =>
+        Action<Exception> error(string stage) => (Exception e) =>
         {
 #if DEBUG
             throw e;
 #endif
-            Cli.ErrorLine(e.Message);
+            Cli.ErrorLine($"{stage}: " + e.Message);
         };
 
         
@@ -48,8 +48,8 @@ public static class LuftCli
             var tk = new Tokenizer();
             var ab = new AstBuilder();
 
-            tk.OnError += error;
-            ab.OnError += error;
+            tk.OnError += error("Lexer");
+            ab.OnError += error("Ast");
             
             var tokens = tk.Tokenize(file);
             var ast = ab.BuildAst(tokens);
@@ -60,9 +60,9 @@ public static class LuftCli
         var lookup = new TypeLookup();
         var typeResolver = new TypeResolver();
         var bodyResolver = new BodyResolver();
-        lookup.OnError += error;
-        typeResolver.OnError += error;
-        bodyResolver.OnError += error;
+        lookup.OnError += error("TypeLookup");
+        typeResolver.OnError += error("TypeChecker");
+        bodyResolver.OnError += error("BodyChecker");
         
         var table = lookup.Run(files.ToArray(), []);
         typeResolver.Run(table);

@@ -15,6 +15,7 @@ public abstract class AstVisitor : AeroThrower
             
             // DeclarationNodes
             case FunctionDeclarationNode n: VisitFunction(n); break;
+            case OperatorDeclarationNode n: VisitOperator(n); break;
             case ExtensionDeclarationNode n: VisitExtension(n); break;
             case ExtensionBlockDeclarationNode n: VisitExtensionBlock(n); break;
             case StructDeclarationNode n: VisitStruct(n); break;
@@ -79,6 +80,7 @@ public abstract class AstVisitor : AeroThrower
 
     // DeclarationNodes
     protected virtual void VisitFunction(FunctionDeclarationNode node) => Default(node);
+    protected virtual void VisitOperator(OperatorDeclarationNode node) => Default(node);
     protected virtual void VisitExtension(ExtensionDeclarationNode node) => Default(node);
     protected virtual void VisitExtensionBlock(ExtensionBlockDeclarationNode node) => Default(node);
     protected virtual void VisitStruct(StructDeclarationNode node) => Default(node);

@@ -6,7 +6,7 @@ The compiler toolchain for **Aero** — a compiled, statically-typed language in
 ![Language](https://img.shields.io/badge/language-C%23-239120)
 ![Status](https://img.shields.io/badge/status-in%20development-yellow)
 ![Stage](https://img.shields.io/badge/stage-type%20checking-orange)
-![License](https://img.shields.io/badge/license-unlicensed-lightgrey)
+![License](https://img.shields.io/badge/License-MIT%20License-blue)
 
 ---
 

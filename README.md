@@ -2,7 +2,7 @@
 
 The compiler toolchain for **Aero** — a compiled, statically-typed language inspired by Kotlin and C#, aiming for the performance profile of C++/Rust.
 
-![.NET](https://img.shields.io/badge/.NET-10.0-512BD4?logo=dotnet&logoColor=white)
+![.NET](https://img.shields.io/badge/-10.0-512BD4?logo=dotnet&logoColor=white)
 ![Language](https://img.shields.io/badge/language-C%23-239120)
 ![Status](https://img.shields.io/badge/status-in%20development-yellow)
 ![Stage](https://img.shields.io/badge/stage-type%20checking-orange)

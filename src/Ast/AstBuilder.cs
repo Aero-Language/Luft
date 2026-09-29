@@ -8,6 +8,16 @@ public sealed class AstBuilder : SafeIterator<Token>
 {
     private static readonly TokenType[] ExcludedTypes = [TokenType.Whitespace, TokenType.Comment, TokenType.Unknown];
 
+    // Tokens that assign rather than produce a value. Kept out of the normal binary-operator
+    // chain entirely — assignment is parsed directly into an AssignmentStatementNode, never
+    // wrapped and later unwrapped from a BinaryExpressionNode.
+    private static readonly TokenType[] AssignmentTokens =
+    [
+        TokenType.Assign, TokenType.AddAssign, TokenType.SubtractAssign, TokenType.MultiplyAssign,
+        TokenType.DivideAssign, TokenType.ModuloAssign, TokenType.AndAssign, TokenType.OrAssign,
+        TokenType.XorAssign, TokenType.LeftShiftAssign, TokenType.RightShiftAssign
+    ];
+
     public AstBuilder()
     {
         Denied = token => ExcludedTypes.Contains(token.Type);
@@ -56,20 +66,19 @@ public sealed class AstBuilder : SafeIterator<Token>
         
         var name = ExpectType(TokenType.Identifier, "Identifier not found.").Value;
         
-        // Handle parameters if passed
         var parameters = new List<ExpressionNode>();
         if (Peek().Type is TokenType.ParenthesisOpen)
         {
-            Pop(); // Pop '('
+            Pop();
             while (Peek().Type is not TokenType.ParenthesisClose and not TokenType.Eof)
             {
                 parameters.Add(PopExpression());
                 
                 if (Peek().Type is TokenType.Comma)
                 {
-                    Pop(); // Pop ','
+                    Pop();
                     
-                    // Allow trailing comma: @Foo(a, b,)
+                    // Trailing comma before the closing paren: @Foo(a, b,)
                     if (Peek().Type is TokenType.ParenthesisClose)
                     {
                         break;
@@ -117,12 +126,12 @@ public sealed class AstBuilder : SafeIterator<Token>
     ModuleDeclarationNode PopModule()
     {
         ExpectType(TokenType.ModuleKeyword, "Use the 'module' keyword to declare a module.");
-        var identifier= PopIdentifier();
+        var identifier = PopIdentifier();
         
         var decls = new List<DeclarationNode>();
         if (Peek().Type is TokenType.BracketOpen)
         {
-            Pop(); // Pop '{'
+            Pop();
             
             while (Peek().Type is not TokenType.BracketClose and not TokenType.Eof)
             {
@@ -148,19 +157,19 @@ public sealed class AstBuilder : SafeIterator<Token>
         var startSpan = Peek().Span;
         var access = accessMod ?? AccessModExtensions.FunctionDefault;
 
-        if (Peek().Type is TokenType.InstanceKind && Peek().Value == "extension") Pop(); // Pop 'extension' 
+        if (Peek().Type is TokenType.InstanceKind && Peek().Value == "extension") Pop();
         bool isOp = Peek().Type is TokenType.InstanceKind && Peek().Value == "op";
         ExpectInstance(["fun"], "Expected 'fun' keyword");
         
         var name = PopIdentifier();
         var opString = isOp ? name.IdentifierParts().Last() : "";
-        var generics = !isOp ? PopGenericDecls() : []; // Only pop the generics if it's not an operator overload    
+        var generics = !isOp ? PopGenericDecls() : []; // operator overloads don't get their own generic parameter list
         var parameters = PopParameterDecl();
 
         var returning = AeroType.Void;
         if (Peek().Type is TokenType.ArrowSymbol)
         {
-            Pop(); // Pop '->'
+            Pop();
             returning = PopType();
         }
 
@@ -229,7 +238,6 @@ public sealed class AstBuilder : SafeIterator<Token>
         var startSpan = Peek().Span;
         var access = accessMod ?? AccessModExtensions.StructDeclDefault;
         
-        // Make sure the struct keyword was used
         ExpectInstance(["struct"], "Expected 'struct'");
 
         var name = PopIdentifier();
@@ -256,7 +264,6 @@ public sealed class AstBuilder : SafeIterator<Token>
         var startSpan = Peek().Span;
         var access = accessMod ?? AccessModExtensions.RecordDeclDefault;
 
-        // Make sure the record keyword was used
         ExpectInstance(["record"], "Expected 'record'");
         
         var name = PopIdentifier();
@@ -285,7 +292,6 @@ public sealed class AstBuilder : SafeIterator<Token>
         var startSpan = Peek().Span;
         var access = accessMod ?? AccessModExtensions.AnnotationDeclDefault;
 
-        // Make sure the annotation keyword was used
         ExpectInstance(["annotation"], "Expected 'annotation'");
         
         var name = PopIdentifier();
@@ -305,7 +311,6 @@ public sealed class AstBuilder : SafeIterator<Token>
         var startSpan = Peek().Span;
         var access = accessMod ?? AccessModExtensions.ClassDeclDefault;
 
-        // Make sure the class keyword was used
         ExpectInstance(["class"], "Expected 'class'");
         
         var name = PopIdentifier();
@@ -333,7 +338,6 @@ public sealed class AstBuilder : SafeIterator<Token>
         var startSpan = Peek().Span;
         var access = accessMod ?? AccessModExtensions.TraitDeclDefault;
 
-        // Make sure the class keyword was used
         ExpectInstance(["trait"], "Expected 'trait'");
         
         var name = PopIdentifier();
@@ -355,10 +359,9 @@ public sealed class AstBuilder : SafeIterator<Token>
         var startSpan = Peek().Span;
         var access = accessMod ?? AccessModExtensions.EnumDeclDefault;
         
-        // Make sure the enum keyword was used and check if it's an enum class
         ExpectInstance(["enum"], "Expected 'enum'");
         bool isEnumClass = Peek().Type is TokenType.InstanceKind && Peek().Value == "class";
-        if (isEnumClass) Pop(); // Pop 'class'
+        if (isEnumClass) Pop();
 
         var name = PopIdentifier();
 
@@ -371,7 +374,7 @@ public sealed class AstBuilder : SafeIterator<Token>
         AeroType? memberType = null;
         if (Peek().Type is TokenType.Colon)
         {
-            Pop(); // Pop ':'
+            Pop();
             memberType = PopType();
         }
 
@@ -385,12 +388,12 @@ public sealed class AstBuilder : SafeIterator<Token>
             ExpressionNode? memberValue = null;
             if (Peek().Type is TokenType.Assign)
             {
-                Pop(); // Pop '='
+                Pop();
                 memberValue = PopExpression();
             }
             members.Add(new EnumMemberNode(memberName, memberValue, memberStartSpan.To(Peek().Span)));
             
-            if (Peek().Type is TokenType.Comma) Pop(); // Pop ','
+            if (Peek().Type is TokenType.Comma) Pop();
         }
         ExpectType(TokenType.BracketClose, "Expected '}'");
         
@@ -401,7 +404,7 @@ public sealed class AstBuilder : SafeIterator<Token>
         var startSpan = Peek().Span;
         var access = accessMod ?? AccessModExtensions.PropertyDefault;
 
-        if (Peek().Type is TokenType.InstanceKind && Peek().Value == "extension") Pop(); // Pop 'extension'
+        if (Peek().Type is TokenType.InstanceKind && Peek().Value == "extension") Pop();
         
         var name = PopIdentifier();
 
@@ -421,7 +424,7 @@ public sealed class AstBuilder : SafeIterator<Token>
                 var accessorAccess = PopAccessMod() ?? AccessMod.Public;
                 
                 var kind = Peek().Value.GetAccessorKind() ?? PropertyAccessorKind.Get;
-                Pop(); // Pop 'get|set|init'
+                Pop();
                 
                 if (kind is PropertyAccessorKind.Get && getter != null)
                 {
@@ -446,7 +449,7 @@ public sealed class AstBuilder : SafeIterator<Token>
             else
             {
                 Error("You can only declare Property accessors here.", Peek().Span);
-                Pop(); // Pop the unknown token
+                Pop(); // skip the unrecognized token so the loop can't get stuck
             }
         }
         
@@ -455,7 +458,7 @@ public sealed class AstBuilder : SafeIterator<Token>
         ExpressionNode? init = null;
         if (Peek().Type is TokenType.Assign)
         {
-            Pop(); // Pop '='
+            Pop();
             init = PopExpression();
         }
         
@@ -473,14 +476,14 @@ public sealed class AstBuilder : SafeIterator<Token>
         var type = AeroType.Auto;
         if (Peek().Type is TokenType.Colon)
         {
-            Pop(); // Pop ':'
+            Pop();
             type = PopType();
         }
 
         ExpressionNode? init = null;
         if (Peek().Type is TokenType.Assign)
         {
-            Pop(); // Pop '='
+            Pop();
             init = PopExpression();
         }
         
@@ -508,13 +511,13 @@ public sealed class AstBuilder : SafeIterator<Token>
             ExpressionNode? init = null;
             if (Peek().Type is TokenType.Equality)
             {
-                Pop(); // Pop '='
+                Pop();
                 init = PopExpression();
             }
             
             variables.Add(new FieldDeclarationNode([], AccessMod.Private, InheritanceMod.None, MemberMod.None, varKind, type, name, init, paramStart.To(Peek().Span)));
             
-            if (Peek().Type is TokenType.Comma) Pop(); // Pop ','
+            if (Peek().Type is TokenType.Comma) Pop();
         }
 
         ExpectType(TokenType.ParenthesisClose, "Expected ')'");
@@ -582,14 +585,14 @@ public sealed class AstBuilder : SafeIterator<Token>
         var type = AeroType.Auto;
         if (Peek().Type is TokenType.Colon)
         {
-            Pop(); // Pop ':'
+            Pop();
             type = PopType();
         }
         
         ExpressionNode? init = null;
         if (Peek().Type is TokenType.Assign)
         {
-            Pop(); // Pop '='
+            Pop();
             init = PopExpression();
         }
         
@@ -620,7 +623,7 @@ public sealed class AstBuilder : SafeIterator<Token>
             _ => new EmptyStatementNode(span)
         };
 
-        if (statement is not EmptyStatementNode) Pop(); // Pop the keyword
+        if (statement is not EmptyStatementNode) Pop();
 
         PopStatementTerminator();
         
@@ -647,13 +650,19 @@ public sealed class AstBuilder : SafeIterator<Token>
         var startSpan = Peek().Span;
         
         var expression = PopExpression();
-        PopStatementTerminator();
-        
-        if (expression is BinaryExpressionNode bin && bin.Operator.IsAssignment())
+
+        // Assignment is its own statement form, not a value-producing expression — handled
+        // directly here so it never has to be recognized and unwrapped from a binary node later.
+        if (AssignmentTokens.Contains(Peek().Type))
         {
-            return new AssignmentStatementNode(bin.Left, bin.Operator, bin.Right, bin.Span);
+            var op = Peek().Type.ToOperator();
+            Pop();
+            var value = PopExpression();
+            PopStatementTerminator();
+            return new AssignmentStatementNode(expression, op, value, startSpan.To(Peek().Span));
         }
         
+        PopStatementTerminator();
         return new ExpressionStatementNode(expression, startSpan.To(Peek().Span));
     }
     ImportStatementNode PopImport()
@@ -683,7 +692,7 @@ public sealed class AstBuilder : SafeIterator<Token>
             {
                 subImports.Add(Pop().Value);
 
-                if (Peek().Type is TokenType.Comma) Pop(); // Pop trailing comma
+                if (Peek().Type is TokenType.Comma) Pop(); // trailing comma between names
             }
             
             PopStatementTerminator();
@@ -696,15 +705,13 @@ public sealed class AstBuilder : SafeIterator<Token>
     
     
     // Expressions
-    ExpressionNode PopExpression(bool allowUnparenthesizedBlock = true)
-    {
-        return PopRange(allowUnparenthesizedBlock); // Start with range and cascade down
-    }
+    ExpressionNode PopExpression(bool allowUnparenthesizedBlock = true) => PopOr(allowUnparenthesizedBlock);
     ExpressionNode PopPrimary()
     {
         var firstToken = Peek().Type;
 
-        // Ensure Dot is excluded from prefix unary operations
+        // Dot is excluded here so member access falls through to PopPostfix instead of being
+        // mistaken for a prefix unary operator.
         if (firstToken.IsOperator() && firstToken is not TokenType.Dot)
         {
             return PopUnary();
@@ -783,7 +790,7 @@ public sealed class AstBuilder : SafeIterator<Token>
         var startSpan = Peek().Span;
         
         ExpectType(TokenType.ParenthesisOpen, "Expected '('");
-        var expr = PopExpression(); // Cascades back down to the lowest precedence level
+        var expr = PopExpression(); // cascades back down to the lowest precedence level
         ExpectType(TokenType.ParenthesisClose, "Expected ')'");
         
         return new ScopedExpressionNode(expr, startSpan.To(Peek().Span)); 
@@ -797,7 +804,7 @@ public sealed class AstBuilder : SafeIterator<Token>
         if (Peek().Type is TokenType.EqualArrow)
         {
             isSingleLine = true;
-            Pop(); // Pop '=>'
+            Pop();
             statements.Add(PopStatement());
         }
         else
@@ -909,16 +916,73 @@ public sealed class AstBuilder : SafeIterator<Token>
         {
             var patternStart = Peek().Span;
             
-            var pattern = PopExpression(false);
+            var pattern = PopPattern();
+
+            ExpressionNode? guard = null;
+            if (Peek().Type is TokenType.IfKeyword)
+            {
+                Pop();
+                ExpectType(TokenType.ParenthesisOpen, "Expected '('");
+                guard = PopExpression();
+                ExpectType(TokenType.ParenthesisClose, "Expected ')'");
+            }
+
             var body = PopBlock();
 
-            if (Peek().Type is TokenType.Comma) Pop(); // Pop ','
+            if (Peek().Type is TokenType.Comma) Pop();
             
-            cases.Add(new CaseExpressionNode(pattern, body, patternStart.To(Peek().Span)));
+            cases.Add(new CaseExpressionNode(pattern, guard, body, patternStart.To(Peek().Span)));
         }
         ExpectType(TokenType.BracketClose, "Expected '}'");
 
         return new MatchExpressionNode(target, cases.ToValueList(), startSpan.To(Peek().Span));
+    }
+    // `or` chains several patterns together: `GameState.Menu or GameState.Paused => ...`
+    PatternNode PopPattern()
+    {
+        var left = PopSinglePattern();
+        while (Peek().Type is TokenType.Or)
+        {
+            Pop();
+            var right = PopSinglePattern();
+            left = new OrPattern(left, right, left.Span.To(Peek().Span));
+        }
+        return left;
+    }
+    PatternNode PopSinglePattern()
+    {
+        var startSpan = Peek().Span;
+
+        if (Peek().Type is TokenType.ElseKeyword)
+        {
+            Pop();
+            return new ElsePattern(startSpan.To(Peek().Span));
+        }
+
+        if (Peek().Type is TokenType.Is)
+        {
+            Pop();
+            var type = PopType();
+            string? binding = Peek().Type is TokenType.Identifier ? Pop().Value : null;
+            return new TypePattern(type, binding, startSpan.To(Peek().Span));
+        }
+
+        if (Peek().Type is TokenType.InKeyword)
+        {
+            Pop();
+            var range = PopRange();
+            if (range is not RangeExpressionNode rangeExpr)
+            {
+                Error("Expected a range after 'in'", Peek().Span);
+                return new ElsePattern(startSpan.To(Peek().Span));
+            }
+            return new RangePattern(rangeExpr, startSpan.To(Peek().Span));
+        }
+
+        // A plain value pattern. Kept at postfix level, with unparenthesized-block lambdas
+        // disallowed, so the case's own '{' body can't be swallowed as a trailing lambda call.
+        var value = PopPostfix(false);
+        return new ConstantPattern(value, startSpan.To(Peek().Span));
     }
     ExpressionNode PopLiteral()
     {
@@ -957,13 +1021,13 @@ public sealed class AstBuilder : SafeIterator<Token>
                 obj = token.Value;
                 break;
             case TokenType.SquareOpen:
-                Pop(); // Pop '['
+                Pop();
 
                 List<ExpressionNode> elements = [];
                 while (Peek().Type is not TokenType.SquareClose and not TokenType.Eof)
                 {
                     elements.Add(PopExpression());
-                    if (Peek().Type is TokenType.Comma) Pop(); // Pop ','
+                    if (Peek().Type is TokenType.Comma) Pop();
                 }
                 ExpectType(TokenType.SquareClose, "Expected ']'");
 
@@ -971,13 +1035,13 @@ public sealed class AstBuilder : SafeIterator<Token>
         }
         
         if (obj is null) Error("Literal could not be parsed", startSpan);
-        else Pop(); // Pop the literal token
+        else Pop();
         
         return new LiteralExpressionNode(obj ?? 0, token.Type, startSpan.To(Peek().Span));
     }
     IdentifierExpressionNode PopIdentifierExpr()
     {
-        var token = ExpectType(TokenType.Identifier, "LogicalNot an identifier");
+        var token = ExpectType(TokenType.Identifier, "Expected an identifier");
         return new IdentifierExpressionNode(token.Value, token.Span);
     }
     MemberAccessExpressionNode PopMemberAccess(ExpressionNode source)
@@ -995,7 +1059,7 @@ public sealed class AstBuilder : SafeIterator<Token>
         
         if (Peek().Type is TokenType.ParenthesisOpen)
         {
-            Pop(); // Pop '('
+            Pop();
 
             while (Peek().Type is not TokenType.ParenthesisClose and not TokenType.Eof)
             {
@@ -1010,7 +1074,7 @@ public sealed class AstBuilder : SafeIterator<Token>
             ExpectType(TokenType.ParenthesisClose, "Expected ')'");
         }
 
-        // Kotlin style trailing lambda parsing
+        // Kotlin-style trailing lambda: foo(1, 2) { ... } or foo { ... }
         if (Peek().Type is TokenType.BracketOpen)
         {
             parameters.Add(PopLambda());
@@ -1028,54 +1092,79 @@ public sealed class AstBuilder : SafeIterator<Token>
         
         return new IndexExpressionNode(target, index, startSpan.To(Peek().Span));
     }
-    ExpressionNode PopRange(bool allowUnparenthesizedBlock = true)
+    ExpressionNode PopRelational(bool allowUnparenthesizedBlock = true)
     {
-        // 1. Handle Prefix Range (..b) or Full Range (..)
-        if (IsRangeToken())
+        var left = PopRange(allowUnparenthesizedBlock);
+
+        while (true)
         {
-            var startSpan = Peek().Span;
-            Pop(); // Pop '..'
-
-            ExpressionNode? right = null;
-            if (CanStartExpression())
+            if (Peek().Type is TokenType.LessThan or TokenType.GreaterThan or TokenType.LessThanEqual or TokenType.GreaterThanEqual)
             {
-                right = PopBinary(allowUnparenthesizedBlock);
+                var startSpan = left.Span;
+                var op = PopOperator();
+                var right = PopRange(allowUnparenthesizedBlock);
+                left = new BinaryExpressionNode(left, op, right, startSpan.To(Peek().Span));
             }
-
-            return new RangeExpressionNode(null, right, startSpan.To(Peek().Span));
-        }
-
-        // 2. Parse the left-hand expression
-        var left = PopBinary(allowUnparenthesizedBlock);
-
-        // 3. Handle Binary Range (a..b) or Postfix Range (a..)
-        if (IsRangeToken())
-        {
-            var startSpan = left.Span;
-            Pop(); // Pop '..'
-
-            ExpressionNode? right = null;
-            if (CanStartExpression())
+            else if (Peek().Type is TokenType.Is or TokenType.InKeyword)
             {
-                right = PopBinary(allowUnparenthesizedBlock);
+                left = PopPatternTest(left);
             }
-
-            return new RangeExpressionNode(left, right, startSpan.To(Peek().Span));
+            else
+            {
+                break;
+            }
         }
 
         return left;
     }
-    ExpressionNode PopBinary(bool allowUnparenthesizedBlock = true)
+    // 'is'/'in' read like relational operators but test against a type or a range rather than
+    // comparing two values, so they get their own node instead of a fake Operator.
+    ExpressionNode PopPatternTest(ExpressionNode target)
     {
-        var left = PopCast(allowUnparenthesizedBlock);
+        var startSpan = target.Span;
 
-        while (Peek().Type.IsOperator() && Peek().Type is not TokenType.Dot && Peek().Type is not TokenType.CastSymbol && !IsRangeToken())
+        if (Peek().Type is TokenType.Is)
+        {
+            Pop();
+            bool negated = Peek().Type is TokenType.Not;
+            if (negated) Pop();
+            var type = PopType();
+            return new PatternTestExpressionNode(target, new TypePattern(type, null, startSpan.To(Peek().Span)), negated, startSpan.To(Peek().Span));
+        }
+
+        Pop(); // 'in'
+        var range = PopRange();
+        if (range is not RangeExpressionNode rangeExpr)
+        {
+            Error("Expected a range after 'in'", Peek().Span);
+            return target;
+        }
+        return new PatternTestExpressionNode(target, new RangePattern(rangeExpr, startSpan.To(Peek().Span)), false, startSpan.To(Peek().Span));
+    }
+    ExpressionNode PopRange(bool allowUnparenthesizedBlock = true)
+    {
+        // Prefix range (..b) or full range (..)
+        if (IsRangeToken())
+        {
+            var startSpan = Peek().Span;
+            Pop();
+
+            ExpressionNode? right = CanStartExpression() ? PopShift(allowUnparenthesizedBlock) : null;
+
+            return new RangeExpressionNode(null, right, startSpan.To(Peek().Span));
+        }
+
+        var left = PopShift(allowUnparenthesizedBlock);
+
+        // Binary range (a..b) or postfix range (a..)
+        if (IsRangeToken())
         {
             var startSpan = left.Span;
-            var op = PopOperator();
-            var right = PopCast(allowUnparenthesizedBlock);
+            Pop();
 
-            left = new BinaryExpressionNode(left, op, right, startSpan.To(Peek().Span));
+            ExpressionNode? right = CanStartExpression() ? PopShift(allowUnparenthesizedBlock) : null;
+
+            return new RangeExpressionNode(left, right, startSpan.To(Peek().Span));
         }
 
         return left;
@@ -1087,7 +1176,7 @@ public sealed class AstBuilder : SafeIterator<Token>
         while (Peek().Type is TokenType.CastSymbol)
         {
             var startSpan = expr.Span;
-            Pop(); // Pop '::'
+            Pop();
 
             var target = PopPostfix(allowUnparenthesizedBlock);
 
@@ -1095,6 +1184,36 @@ public sealed class AstBuilder : SafeIterator<Token>
         }
 
         return expr;
+    }
+
+    // ---- Precedence ladder ------------------------------------------------
+    // Loosest to tightest: or, and, |, ^, &, ==/!=, relational (incl. is/in), .., <</>>, +/-,
+    // */%, cast (::), then postfix/primary. Each tier parses the next-tighter tier and loops
+    // while it keeps seeing its own operators — the standard shape for every tier below.
+    ExpressionNode PopOr(bool allow = true) => PopLeftAssoc(PopAnd, allow, TokenType.Or, TokenType.LogicalOr);
+    ExpressionNode PopAnd(bool allow = true) => PopLeftAssoc(PopBitOr, allow, TokenType.And, TokenType.LogicalAnd);
+    ExpressionNode PopBitOr(bool allow = true) => PopLeftAssoc(PopBitXor, allow, TokenType.BitwiseOr);
+    ExpressionNode PopBitXor(bool allow = true) => PopLeftAssoc(PopBitAnd, allow, TokenType.BitwiseXor);
+    ExpressionNode PopBitAnd(bool allow = true) => PopLeftAssoc(PopEquality, allow, TokenType.BitwiseAnd);
+    ExpressionNode PopEquality(bool allow = true) => PopLeftAssoc(PopRelational, allow, TokenType.Equality, TokenType.Inequality);
+    ExpressionNode PopShift(bool allow = true) => PopLeftAssoc(PopAdditive, allow, TokenType.LeftShift, TokenType.RightShift);
+    ExpressionNode PopAdditive(bool allow = true) => PopLeftAssoc(PopMultiplicative, allow, TokenType.Add, TokenType.Subtract);
+    ExpressionNode PopMultiplicative(bool allow = true) => PopLeftAssoc(PopCast, allow, TokenType.Multiply, TokenType.Divide, TokenType.Modulo);
+
+    ExpressionNode PopLeftAssoc(Func<bool, ExpressionNode> next, bool allowUnparenthesizedBlock, params TokenType[] tokens)
+    {
+        var left = next(allowUnparenthesizedBlock);
+
+        while (tokens.Contains(Peek().Type))
+        {
+            var startSpan = left.Span;
+            var op = PopOperator();
+            var right = next(allowUnparenthesizedBlock);
+
+            left = new BinaryExpressionNode(left, op, right, startSpan.To(Peek().Span));
+        }
+
+        return left;
     }
     UnaryExpressionNode PopUnary()
     {
@@ -1123,7 +1242,7 @@ public sealed class AstBuilder : SafeIterator<Token>
         ExpectType(TokenType.BracketOpen, "Expected '{'");
 
         List<ParamNode> parameters = [];
-        if (Peek().Type is TokenType.Identifier) // If there is at least one parameter, then parse the lambda
+        if (Peek().Type is TokenType.Identifier) // a named parameter list, if any
         {
             while (Peek().Type is not TokenType.ArrowSymbol and not TokenType.Eof)
             {
@@ -1133,7 +1252,7 @@ public sealed class AstBuilder : SafeIterator<Token>
                 var type = AeroType.Auto;
                 if (Peek().Type is TokenType.Colon)
                 {
-                    Pop(); // Pop ':'
+                    Pop();
                     type = PopType();
                 }
             
@@ -1151,7 +1270,7 @@ public sealed class AstBuilder : SafeIterator<Token>
         var block = new BlockExpressionNode(false, statements.ToValueList(), startSpan.To(Peek().Span));
         
         return new LambdaExpressionNode(parameters.ToValueList(), block, startSpan.To(Peek().Span));
-}
+    }
     StringInterpolationExpressionNode PopInterpolation()
     {
         var startSpan = Peek().Span;
@@ -1161,19 +1280,19 @@ public sealed class AstBuilder : SafeIterator<Token>
 
         while (Peek().Type is not TokenType.InterpolationEnd and not TokenType.Eof)
         {
-            // 1. Raw string segment fragment
+            // Raw string segment
             if (Peek().Type is TokenType.StringLiteral)
             {
                 parts.Add(PopLiteral());
             }
-            // 2. Embedded expression within braces: ${ expr } or { expr }
+            // Embedded expression in braces: ${ expr } or { expr }
             else if (Peek().Type is TokenType.BracketOpen)
             {
-                Pop(); // Pop '{'
+                Pop();
                 parts.Add(PopExpression());
                 ExpectType(TokenType.BracketClose, "Expected '}' after interpolated expression");
             }
-            // 3. Direct inline expression: $identifier
+            // Direct inline expression: $identifier
             else
             {
                 parts.Add(PopExpression());
@@ -1182,7 +1301,7 @@ public sealed class AstBuilder : SafeIterator<Token>
 
         if (Peek().Type is TokenType.InterpolationEnd)
         {
-            Pop(); // Pop closing string delimiter / token
+            Pop();
         }
 
         return new StringInterpolationExpressionNode(parts.ToValueList(), startSpan.To(Peek().Span));
@@ -1211,7 +1330,6 @@ public sealed class AstBuilder : SafeIterator<Token>
     }
     string PopIdentifier()
     {
-        // Make sure that the identifier is not nothing
         var first = ExpectType(TokenType.Identifier, "Identifier not found").Value;
         
         string name = first;
@@ -1221,7 +1339,7 @@ public sealed class AstBuilder : SafeIterator<Token>
         {
             name += Pop().Value;
 
-            // Pop the dot between two identifiers and add it
+            // Only consume the dot if another identifier segment actually follows
             if (Peek().Type is TokenType.Dot && Peek(1).Type is TokenType.Identifier)
             {
                 name += Pop().Value;
@@ -1307,16 +1425,16 @@ public sealed class AstBuilder : SafeIterator<Token>
         bool isRef = Peek().Type is TokenType.RefKeyword;
         if (isRef) Pop();
 
-        // A lambda type
+        // Lambda type: (params) -> ReturnType
         if (Peek().Type is TokenType.ParenthesisOpen)
         {
-            Pop(); // Pop '('
+            Pop();
 
             List<TypeParam> parameters = [];
             while (Peek().Type is not TokenType.ParenthesisClose and not TokenType.Eof)
             {
                 parameters.Add(PopTypeParam());
-                if (Peek().Type is TokenType.Comma) Pop(); // Pop ','
+                if (Peek().Type is TokenType.Comma) Pop();
             }
             ExpectType(TokenType.ParenthesisClose, "Expected ')'");
 
@@ -1326,13 +1444,13 @@ public sealed class AstBuilder : SafeIterator<Token>
             AeroType returnType = AeroType.Void;
             if (Peek().Type is TokenType.ArrowSymbol)
             {
-                Pop(); // Pop '->'
+                Pop();
                 returnType = PopType();
             }
             
             baseType = new LambdaType(parameters.ToValueList(), returnType, isRef, isLambdaNullable);
         }
-        // A scalar / generic type
+        // Scalar or generic type
         else
         {
             if (Peek().Type is not TokenType.Identifier)
@@ -1342,17 +1460,14 @@ public sealed class AstBuilder : SafeIterator<Token>
             }
             var name = PopIdentifier();
         
-            // A generic type
             List<GenericParameterType>? generics = null;
             if (Peek().Type is TokenType.LessThan)
             {
-                Pop(); // Pop '<'
+                Pop();
                 generics = [];
             
-                while (Peek().Type is not TokenType.GreaterThan and not TokenType.Eof) // Make sure trailing commas are handled correctly and do not try to
+                while (Peek().Type is not TokenType.GreaterThan and not TokenType.Eof)
                 {
-                    // ref G? : String
-                
                     bool isParamRef = Peek().Type is TokenType.RefKeyword;
                     if (isParamRef) Pop();
 
@@ -1364,13 +1479,13 @@ public sealed class AstBuilder : SafeIterator<Token>
                     AeroType? constraint = null;
                     if (Peek().Type is TokenType.Colon)
                     {
-                        Pop(); // Pop ':'
+                        Pop();
                         constraint = PopType();
                     }
                 
                     if (Peek().Type is TokenType.Comma)
                     {
-                        Pop(); // Pop ','
+                        Pop();
                     }
 
                     generics.Add(new GenericParameterType(paramName, constraint, isParamRef, isParamNullable));
@@ -1387,13 +1502,12 @@ public sealed class AstBuilder : SafeIterator<Token>
                 IsNullable: isNullable
             );
 
-            // If it is a generic type, replace the baseType with it
             if (generics is not null) baseType = new GenericType(baseType, generics.ToValueList());
         }
         
         while (Peek().Type is TokenType.SquareOpen)
         {
-            Pop(); // Pop '['
+            Pop();
             ExpectType(TokenType.SquareClose, "Expected ']'");
             
             bool isArrayNullable = Peek().Type is TokenType.Nullable;
@@ -1435,14 +1549,14 @@ public sealed class AstBuilder : SafeIterator<Token>
 
             if (Peek().Type is TokenType.Equality)
             {
-                Pop(); // Pop '='
+                Pop();
 
                 init = PopExpression();
             }
             
             result.Add(new ParamNode(name, type, paramStart.To(Peek().Span), init, varKind));
             
-            if (Peek().Type is TokenType.Comma) Pop(); // Pop ','
+            if (Peek().Type is TokenType.Comma) Pop();
         }
         
         ExpectType(TokenType.ParenthesisClose, "Expected ')'");
@@ -1454,13 +1568,13 @@ public sealed class AstBuilder : SafeIterator<Token>
         List<AeroType> results = [];
         if (Peek().Type is TokenType.Colon)
         {
-            Pop(); // Pop ':'
+            Pop();
             
             while (Peek().Type is not TokenType.Eof and not TokenType.Semicolon and not TokenType.BracketOpen)
             {
                 results.Add(PopType());
 
-                if (Peek().Type is TokenType.Comma) Pop(); // Pop ','
+                if (Peek().Type is TokenType.Comma) Pop();
             }
         }
 
@@ -1471,7 +1585,7 @@ public sealed class AstBuilder : SafeIterator<Token>
         List<GenericParameterType> generics = [];
         if (Peek().Type is TokenType.LessThan)
         {
-            Pop(); // Pop '<'
+            Pop();
             
             while (Peek().Type is not TokenType.GreaterThan and not TokenType.Eof)
             {
@@ -1482,17 +1596,16 @@ public sealed class AstBuilder : SafeIterator<Token>
 
                 if (Peek().Type is TokenType.Colon)
                 {
-                    Pop(); // Pop ':'
+                    Pop();
                     
                     typeConstraint = PopType();
                 }
                 
                 generics.Add(new(name, typeConstraint));
 
-                // Pops
                 if (Peek().Type is TokenType.Comma && Peek(1).Type is not TokenType.GreaterThan)
                 {
-                    Pop(); // Pop commas
+                    Pop();
                 }
             }
 
@@ -1517,7 +1630,7 @@ public sealed class AstBuilder : SafeIterator<Token>
         if (Peek().Type is TokenType.Semicolon or TokenType.Eof)
             return true;
 
-        // Check if a line break occurred between the previous Popped token and current token
+        // Otherwise, a line break between the previous token and this one also ends a statement
         return Peek().Span.Start.Line > Peek(-1).Span.End.Line;
     }
     void PopStatementTerminator()
@@ -1532,26 +1645,22 @@ public sealed class AstBuilder : SafeIterator<Token>
         result = 0;
         if (string.IsNullOrWhiteSpace(text)) return false;
 
-        // 1. Remove digit separators '_'
-        string clean = text.Replace("_", "");
+        string clean = text.Replace("_", ""); // digit separators, e.g. 1_000_000
 
         try
         {
-            // 2. Parse Hexadecimal (0x / 0X) -> Base 16
             if (clean.StartsWith("0x", StringComparison.OrdinalIgnoreCase))
             {
                 result = Convert.ToInt32(clean[2..], 16);
                 return true;
             }
 
-            // 3. Parse Binary (0b / 0B) -> Base 2
             if (clean.StartsWith("0b", StringComparison.OrdinalIgnoreCase))
             {
                 result = Convert.ToInt32(clean[2..], 2);
                 return true;
             }
 
-            // 4. Parse Decimal -> Base 10
             return int.TryParse(clean, out result);
         }
         catch

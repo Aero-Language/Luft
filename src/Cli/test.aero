@@ -6,6 +6,10 @@
 
 module AeroTests.ComprehensiveTest {
 
+    public static class SomeGame {
+        public static val State: GameState = GameState.Menu
+    }
+
     @Inline
     public enum GameState: Byte { // A collection of CONSTANT values with a name and type
         Menu = 0,
@@ -68,10 +72,6 @@ module AeroTests.ComprehensiveTest {
             return $"\{ X: {X}|Y: {Y}|Z: {Z} \}" // Backslash can always escape chars
         }
     }
-
-    internal extension fun Int.AsState() -> GameState {
-        return GameState[self] // Self here is the Int instance that the extension was called on | enums can be (unsafely) indexed and are of type Int by default
-    }
     
     internal fun DoSomething(something: (str: String) -> Void) { // '() -> ...' are lambda functions that can be executed and return a value
         something("example")
@@ -98,7 +98,7 @@ module AeroTests.ComprehensiveTest {
         // Virtual method for overriding (InheritanceMod test)
         virtual fun Update(deltaTime: Float) -> Void { // '-> Void' is not necessary here, it can be inferred / is the default returnType 
             DoSomething { // if the last parameter of a function is a lambda, it can be directly accessed
-                match (game.State) {
+                match (SomeGame.State) {
                     GameState.Playing {
                         
                     }
@@ -118,7 +118,7 @@ module AeroTests.ComprehensiveTest {
             Items = Items.Append(item)
         }
         public fun Remove(index: Int) {
-            Items = Items[..(Index - 1)] + Items[(Index + 1)..] // Adds the first and second half of the array together and skips the index
+            Items = Items[..(index - 1)] + Items[(index + 1)..] // Adds the first and second half of the array together and skips the index
         }
     }
 
@@ -138,8 +138,7 @@ module AeroTests.ComprehensiveTest {
             health += 1
         }
 
-        public impl fun Serialize() -> String
-            => name // Functions can also use a singleExpression instead of a block
+        public impl fun Serialize() -> String => name // Functions can also use a single expression instead of a block
     }
 
     // Testing Concurrency, Generics, and Ref parameters

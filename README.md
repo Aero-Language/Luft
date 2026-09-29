@@ -28,7 +28,7 @@ Aero source (`.aero`) compiles down through Luft's pipeline toward native/LLVM o
       │
       ▼
  ┌─────────┐     ┌───────────────┐     ┌───────────┐
- │  Lexer  │ ──▶│  AstBuilder   │ ──▶│    AST    │
+ │  Lexer  │ ──▶ │  AstBuilder   │ ──▶ │    AST    │
  └─────────┘     └───────────────┘     └───────────┘
                                             │
                              ┌──────────────┼──────────────┐

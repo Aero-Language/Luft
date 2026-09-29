@@ -156,6 +156,12 @@ public class TypeLookup : AstVisitor
     {
         AddOverloadable(CurrentScope.Fields, node.Name, new FieldSymbol(node.Name, node.AccessMod, node));
     }
+    protected override void VisitPrimaryConstructor(PrimaryConstructorDeclarationNode node)
+    {
+        // `struct Vector2(var X: Float, var Y: Float)` declares its fields inline here rather
+        // than in the body — without this override they never reach CurrentScope.Fields at all.
+        foreach (var field in node.Variables) Visit(field);
+    }
 
     #endregion
     

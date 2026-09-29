@@ -377,11 +377,33 @@ public class PrettyPrinter(int indentAmount = 4, bool isLib = false) : PrinterBa
     }
     protected override string VisitCase(CaseExpressionNode node)
     {
-        var text = Visit(node.Pattern);
+        var text = VisitPattern(node.Pattern);
+        if (node.Guard is not null) text += $" if ({Visit(node.Guard)})";
         text += $" {Visit(node.Body)}";
         
         return text;
     }
+    protected override string VisitPatternTest(PatternTestExpressionNode node)
+    {
+        var target = Visit(node.Target);
+        return node.Pattern switch
+        {
+            RangePattern r => $"{target} in {Visit(r.Range)}",
+            _ => $"{target} is {(node.Negated ? "not " : "")}{VisitPattern(node.Pattern)}"
+        };
+    }
+    // Patterns aren't part of the AstVisitor dispatch (a case's Pattern is the only place one
+    // ever appears), so they get their own small switch here instead of a Visit* override.
+    private string VisitPattern(PatternNode pattern) => pattern switch
+    {
+        ConstantPattern c => Visit(c.Value),
+        TypePattern { Binding: not null } t => $"is {t.Type} {t.Binding}",
+        TypePattern t => $"is {t.Type}",
+        RangePattern r => $"in {Visit(r.Range)}",
+        OrPattern o => $"{VisitPattern(o.Left)} or {VisitPattern(o.Right)}",
+        ElsePattern => "else",
+        _ => "<unknown pattern>"
+    };
     protected override string VisitLiteral(LiteralExpressionNode node)
     {
         return node.LiteralType switch

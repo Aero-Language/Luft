@@ -36,7 +36,8 @@ public record MatchExpressionNode
 
 public record CaseExpressionNode
 (
-    ExpressionNode Pattern,
+    PatternNode Pattern,
+    ExpressionNode? Guard,
     BlockExpressionNode Body,
     SourceSpan Span
 ) : ExpressionNode(Span);

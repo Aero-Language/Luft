@@ -12,10 +12,11 @@ public class BodyResolver : AeroThrower
 
     private TypeTable Table { get; set; } = null!;
 
-    // Ambient context for the 'self' and 'it' literals — set while descending into whichever
-    // body currently defines them, restored on the way back out. Null means "not available here".
+    // Ambient context, set while descending into whatever body currently defines it and restored
+    // on the way back out — null/false means "not available here".
     private AeroType? CurrentSelfType { get; set; }
     private AeroType? CurrentItType { get; set; }
+    private bool InLoop { get; set; }
 
     public void Run(TypeTable typeTable)
     {
@@ -45,8 +46,7 @@ public class BodyResolver : AeroThrower
             CheckExtensionFunctions(extensionFunctions, scope);
         foreach (var operators in scope.Operators.Values) CheckOperators(operators, scope);
 
-        // Nested types weren't being descended into at all before, so their members were never
-        // body-checked. Each type's own members see 'self' bound to that type while we're in here.
+        // Each nested type's own members see 'self' bound to that type while we're inside it.
         foreach (var types in scope.Types.Values)
         {
             foreach (var type in types)
@@ -62,11 +62,10 @@ public class BodyResolver : AeroThrower
     }
 
     // 'self' inside a generic type's own body isn't the bare type — 'Box' and 'Box<T>' are
-    // different types (a bare 'Box' wouldn't even resolve to anything, since every reference to
-    // a generic type needs its argument list). Inside `class Box<T> { ... }`, 'self' refers to
-    // this type applied to its own declared parameters, i.e. 'Box<T>', reusing the very same
-    // GenericParameterType entries the type declared — so 'T' inside self's type is the same 'T'
-    // already in scope, not a fresh/unrelated one.
+    // different types (a bare 'Box' wouldn't even resolve, since every reference to a generic
+    // type needs its argument list). Inside `class Box<T> { ... }`, 'self' is this type applied
+    // to its own declared parameters, i.e. 'Box<T>', reusing the same GenericParameterType
+    // entries the type declared — so 'T' inside self's type is the same 'T' already in scope.
     private static AeroType SelfTypeFor(TypeSymbol type)
     {
         var bare = new ScalarType(type.Name);
@@ -78,11 +77,45 @@ public class BodyResolver : AeroThrower
     {
         foreach (var field in fields)
         {
+            if (field.Type.IsAuto)
+            {
+                TypeOfField(field, scope);
+                continue;
+            }
+
             if (field.Initializer is not null)
             {
                 CheckTypes(ResolveExpression(field.Initializer, scope, new()), field.Type, scope, field.Span);
             }
         }
+    }
+
+    // A null entry means "currently being inferred", which is how `val a = b` / `val b = a` gets caught.
+    private readonly Dictionary<FieldSymbol, AeroType?> _fieldTypes = new();
+
+    // Fields without a declared type (`const MAX = 100`) take it from their initializer. This runs
+    // on demand rather than in declaration order, because a body can use a field before the field
+    // itself has been checked. `declaringScope` is where the field lives, not where it's used.
+    private AeroType TypeOfField(FieldSymbol field, TypeScope declaringScope)
+    {
+        if (!field.Type.IsAuto) return field.Type;
+
+        if (_fieldTypes.TryGetValue(field, out var cached))
+            return cached ?? Fail($"The type of '{field.Name}' depends on itself", field.Span);
+
+        if (field.Initializer is null)
+            return Fail($"'{field.Name}' needs either a type or an initializer", field.Span);
+
+        _fieldTypes[field] = null;
+
+        // Inference can start from anywhere, so don't leak the caller's loop/it context into the initializer.
+        var (wasInLoop, previousIt) = (InLoop, CurrentItType);
+        (InLoop, CurrentItType) = (false, null);
+
+        var type = ResolveExpression(field.Initializer, declaringScope, new());
+
+        (InLoop, CurrentItType) = (wasInLoop, previousIt);
+        return _fieldTypes[field] = type;
     }
     private void CheckProperties(List<PropertySymbol> properties, TypeScope scope)
     {
@@ -92,7 +125,7 @@ public class BodyResolver : AeroThrower
                 CheckStatements(property.Getter.Body.Statements, scope);
             
             if (property.Setter?.Body is not null)
-                CheckStatements(property.Setter.Body.Statements, scope);
+                CheckStatements(property.Setter.Body.Statements, scope, SetterScope(property.Type, property.Span));
             
             if (property.Initializer is not null)
             {
@@ -105,13 +138,15 @@ public class BodyResolver : AeroThrower
         foreach (var property in properties)
         {
             var previousSelf = CurrentSelfType;
+            var previousIt = CurrentItType;
             CurrentSelfType = property.ExtensionTarget;
+            CurrentItType = property.ExtensionTarget;
 
             if (property.Getter?.Body is not null)
                 CheckStatements(property.Getter.Body.Statements, scope);
             
             if (property.Setter?.Body is not null)
-                CheckStatements(property.Setter.Body.Statements, scope);
+                CheckStatements(property.Setter.Body.Statements, scope, SetterScope(property.Type, property.Span));
             
             if (property.Initializer is not null)
             {
@@ -119,7 +154,17 @@ public class BodyResolver : AeroThrower
             }
 
             CurrentSelfType = previousSelf;
+            CurrentItType = previousIt;
         }
+    }
+
+    // A setter's body sees an implicit `value` parameter, the same way a function sees its
+    // declared ones — it's just never written out in the source.
+    private static BodyScope SetterScope(AeroType propertyType, SourceSpan span)
+    {
+        var scope = new BodyScope();
+        scope.TryAdd(new VariableSymbol("value", propertyType, span));
+        return scope;
     }
     private void CheckFunctions(List<FunctionSymbol> functions, TypeScope scope)
     {
@@ -138,11 +183,14 @@ public class BodyResolver : AeroThrower
             if (function.Body is not null)
             {
                 var previousSelf = CurrentSelfType;
+                var previousIt = CurrentItType;
                 CurrentSelfType = function.ExtensionTarget;
+                CurrentItType = function.ExtensionTarget;
 
                 CheckStatements(function.Body.Statements, scope, ScopeFor(function.Declaration.Parameters), expectedReturn: function.ReturnType);
 
                 CurrentSelfType = previousSelf;
+                CurrentItType = previousIt;
             }
         }
     }
@@ -157,11 +205,9 @@ public class BodyResolver : AeroThrower
         }
     }
 
-    private void CheckStatements(ValueList<StatementNode> statements, TypeScope scope, BodyScope? bScope = null,
-        bool isLoop = false, AeroType? expectedReturn = null)
+    private void CheckStatements(ValueList<StatementNode> statements, TypeScope scope, BodyScope? bScope = null, AeroType? expectedReturn = null)
     {
-        if (bScope is null) bScope = new();
-        else bScope = new(bScope);
+        bScope = bScope is null ? new() : new(bScope);
 
         for (int i = 0; i < statements.Count; i++)
         {
@@ -169,19 +215,23 @@ public class BodyResolver : AeroThrower
             switch (statement)
             {
                 case VariableStatementNode v:
-                    if (v.Initializer is not null) ResolveExpression(v.Initializer, scope, bScope);
-                    if (!bScope.TryAdd(new(v))) Error("Variable already defined", v.Span);
+                    var initType = v.Initializer is not null ? ResolveExpression(v.Initializer, scope, bScope) : AeroType.Void;
+                    var varType = v.Type.IsAuto ? initType : v.Type;
+                    if (!bScope.TryAdd(new VariableSymbol(v, varType))) Error("Variable already defined", v.Span);
                     break;
                 case ReturnStatementNode r:
                     var returned = r.Value is null ? AeroType.Void : ResolveExpression(r.Value, scope, bScope);
                     CheckTypes(returned, expectedReturn, scope, r.Span);
                     break;
                 case ContinueStatementNode or BreakStatementNode:
-                    if (!isLoop) Error("Continue and break can only be used in a loop", statement.Span);
+                    if (!InLoop) Error("Continue and break can only be used in a loop", statement.Span);
                     break;
                 case WhileStatementNode w:
                     CheckTypes(ResolveExpression(w.Condition, scope, bScope), AeroType.Bool, scope, w.Span);
-                    CheckStatements(w.Body.Statements, scope, bScope, isLoop: true);   // pass bScope
+                    var wasInWhile = InLoop;
+                    InLoop = true;
+                    CheckStatements(w.Body.Statements, scope, bScope);
+                    InLoop = wasInWhile;
                     break;
                 case ExpressionStatementNode e:
                     bool wasChecked = false;
@@ -275,6 +325,7 @@ public class BodyResolver : AeroThrower
             BinaryExpressionNode b => ResolveBinary(b, scope, bScope),
             UnaryExpressionNode u => ResolveUnary(u, scope, bScope),
             ScopedExpressionNode sc => ResolveExpression(sc.Scoped, scope, bScope),
+            PatternTestExpressionNode pt => ResolvePatternTest(pt, scope, bScope),
             IndexExpressionNode idx => ResolveIndex(idx, scope, bScope),
             RangeExpressionNode rg => ResolveRange(rg, scope, bScope),
             StringInterpolationExpressionNode interp => ResolveInterpolation(interp, scope, bScope),
@@ -296,15 +347,15 @@ public class BodyResolver : AeroThrower
     private AeroType ResolveError(ExpressionNode expr)
     {
         Error("Expression type could not be resolved", expr.Span);
-        return AeroType.Void;
+        return AeroType.Error; // must be the error sentinel, not a real type, or every caller re-reports on top of it
     }
     private AeroType ResolveBlock(BlockExpressionNode expr, TypeScope scope, BodyScope bScope)
     {
         CheckStatements(expr.Statements, scope, bScope);
 
-        if (expr.Statements[^1] is ReturnStatementNode r && r.Value is not null)
+        if (expr.Statements.Any() && expr.Statements[^1] is ReturnStatementNode r && r.Value is not null)
             return ResolveExpression(r.Value, scope, bScope);
-        if (expr.Statements[^1] is ExpressionStatementNode e)
+        if (expr.Statements.Any() && expr.Statements[^1] is ExpressionStatementNode e)
             return ResolveExpression(e.Expression, scope, bScope);
         return AeroType.Void;
     }
@@ -326,29 +377,105 @@ public class BodyResolver : AeroThrower
     {
         var cType = ResolveExpression(expr.Collection, scope, bScope);
 
-        var loopScope = new BodyScope(bScope);           // loop variable lives only inside the loop
-        if (!loopScope.TryAdd(new(expr.Item))) Error("Variable already declared in scope", expr.Span);
+        var loopScope = new BodyScope(bScope); // the loop variable lives only inside the loop
+        var itemType = expr.Item.Type.IsAuto ? ElementTypeOf(cType, expr.Collection.Span) : expr.Item.Type;
+        if (!loopScope.TryAdd(new VariableSymbol(expr.Item.Name, itemType, expr.Item.Span)))
+            Error("Variable already declared in scope", expr.Span);
 
-        CheckStatements(expr.Body.Statements, scope, loopScope, isLoop: true);
+        var wasInLoop = InLoop;
+        InLoop = true;
+        CheckStatements(expr.Body.Statements, scope, loopScope);
+        InLoop = wasInLoop;
+
         return cType;
     }
+    private AeroType ElementTypeOf(AeroType collection, SourceSpan span) => collection switch
+    {
+        _ when collection == AeroType.Error => AeroType.Error,
+        _ when collection == AeroType.Range => AeroType.Int,
+        ArrayType array => array.ElementType,
+        _ => Fail($"Cannot iterate over '{collection}'", span)
+    };
     private AeroType ResolveMatch(MatchExpressionNode expr, TypeScope scope, BodyScope bScope)
     {
-        ResolveExpression(expr.Target, scope, bScope);
-        var expected = AeroType.Void;
-            
-        if (expr.Cases.Count != 0)
+        var targetType = ResolveExpression(expr.Target, scope, bScope);
+
+        var elseIndex = -1;
+        for (int i = 0; i < expr.Cases.Count; i++)
+            if (expr.Cases[i].Pattern is ElsePattern) { elseIndex = i; break; }
+        if (elseIndex != -1 && elseIndex != expr.Cases.Count - 1)
+            Error("'else' must be the last case", expr.Cases[elseIndex].Span);
+
+        // 'it' is the match target for every case and is never narrowed — a binding pattern
+        // (`is Enemy e`) introduces its own name instead of narrowing 'it' itself.
+        var previousIt = CurrentItType;
+        CurrentItType = targetType;
+
+        var resultType = AeroType.Void;
+        for (int i = 0; i < expr.Cases.Count; i++)
         {
-            expected = ResolveExpression(expr.Cases.First(), scope, bScope);
-                
-            foreach (var caseNode in expr.Cases)
-            {
-                ResolveExpression(caseNode.Pattern, scope, bScope, expected);
-                CheckStatements(caseNode.Body.Statements, scope, bScope);
-            }
+            var caseNode = expr.Cases[i];
+            var caseScope = new BodyScope(bScope);
+
+            CheckPattern(caseNode.Pattern, targetType, scope, caseScope);
+
+            if (caseNode.Guard is not null)
+                CheckTypes(ResolveExpression(caseNode.Guard, scope, caseScope), AeroType.Bool, scope, caseNode.Guard.Span);
+
+            var caseType = ResolveExpression(caseNode.Body, scope, caseScope);
+            if (i == 0) resultType = caseType;
+            else CheckTypes(caseType, resultType, scope, caseNode.Span);
         }
 
-        return expected;
+        CurrentItType = previousIt;
+        return resultType;
+    }
+
+    // Shared between a match case's pattern and a standalone `x is Type` / `x in a..b` test —
+    // the same rules apply either way, just with `bScope` deciding whether a binding sticks.
+    private void CheckPattern(PatternNode pattern, AeroType targetType, TypeScope scope, BodyScope bScope)
+    {
+        switch (pattern)
+        {
+            case ConstantPattern c:
+                CheckTypes(ResolveExpression(c.Value, scope, bScope), targetType, scope, c.Span);
+                break;
+            case TypePattern t:
+                // NOTE: doesn't verify `t.Type` actually exists yet — a typo'd type name in a
+                // pattern currently goes unreported. Worth a follow-up pass.
+                if (t.Binding is not null && !bScope.TryAdd(new VariableSymbol(t.Binding, t.Type, t.Span)))
+                    Error("Variable already defined", t.Span);
+                break;
+            case RangePattern r:
+                ResolveExpression(r.Range, scope, bScope);
+                if (targetType != AeroType.Error && targetType != AeroType.Int)
+                    Error($"Cannot test '{targetType}' against a range", pattern.Span);
+                break;
+            case OrPattern o:
+                if (ContainsBinding(o))
+                    Error("An 'or' pattern cannot bind a name", o.Span);
+                CheckPattern(o.Left, targetType, scope, bScope);
+                CheckPattern(o.Right, targetType, scope, bScope);
+                break;
+            case ElsePattern:
+                break;
+        }
+    }
+    // An 'or' pattern can't offer a binding to its body, since only one side actually matched —
+    // whichever side "won" isn't known by the time the body runs.
+    private static bool ContainsBinding(PatternNode pattern) => pattern switch
+    {
+        TypePattern { Binding: not null } => true,
+        OrPattern o => ContainsBinding(o.Left) || ContainsBinding(o.Right),
+        _ => false
+    };
+    // A standalone `x is Type` / `x in a..b` used as a plain Bool expression. The parser never
+    // gives this form a binding, so unlike a match case it can't introduce a name into scope.
+    private AeroType ResolvePatternTest(PatternTestExpressionNode expr, TypeScope scope, BodyScope bScope)
+    {
+        var targetType = ResolveExpression(expr.Target, scope, bScope);
+        CheckPattern(expr.Pattern, targetType, scope, bScope);
+        return AeroType.Bool;
     }
     private AeroType ResolveLiteral(LiteralExpressionNode expr)
     {
@@ -471,7 +598,6 @@ public class BodyResolver : AeroThrower
     private AeroType ResolveOperator(Operator op, AeroType left, AeroType right, TypeScope scope, SourceSpan span)
     {
         if (left == AeroType.Error || right == AeroType.Error) return AeroType.Error;
-        if (op is Operator.Is or Operator.Not) return AeroType.Bool; // pattern check, not a real operator
 
         if (TryOperatorOverload(op, left, [right], scope, span.FilePath) is { } overloadResult) return overloadResult;
         if (TryPrimitiveOperator(op, left, right) is { } primitiveResult) return primitiveResult;
@@ -626,8 +752,13 @@ public class BodyResolver : AeroThrower
         // it stands in as Auto for now, so 'it' is usable but not yet type-checked against its use.
         CurrentItType = expr.Parameters.Count == 0 ? AeroType.Auto : null;
 
+        // break/continue can't reach through a lambda boundary into an outer loop.
+        var wasInLoop = InLoop;
+        InLoop = false;
+
         var returnType = ResolveBlock(expr.Body, scope, lambdaScope);
 
+        InLoop = wasInLoop;
         CurrentItType = previousIt;
 
         var paramTypes = expr.Parameters.Select(p => new TypeParam(p.Name, p.Type)).ToValueList();
@@ -742,9 +873,9 @@ public class BodyResolver : AeroThrower
         => Table.Modules.Keys.Any(k => k == path || k.StartsWith(path + "."));
     
     
-    private static Resolved? LookupInScope(TypeScope s, string name)
+    private Resolved? LookupInScope(TypeScope s, string name)
     {
-        if (s.Fields.TryGetValue(name, out var fields))    return new ValueRes(fields[0].Type);
+        if (s.Fields.TryGetValue(name, out var fields))    return new ValueRes(TypeOfField(fields[0], s));
         if (s.Properties.TryGetValue(name, out var props)) return new ValueRes(props[0].Type);
         if (s.Functions.TryGetValue(name, out var funcs))  return new FunctionsRes(funcs);
         if (s.Types.TryGetValue(name, out var types))      return new TypeRes(types[0]);
@@ -783,7 +914,7 @@ public class BodyResolver : AeroThrower
 
         var s = type.Scope;
         if (s.Fields.TryGetValue(name, out var fields))
-            return new Member(new ValueRes(fields[0].Type), IsStatic(fields[0].Declaration.MemberMods, fields[0].VarKind));
+            return new Member(new ValueRes(TypeOfField(fields[0], s)), IsStatic(fields[0].Declaration.MemberMods, fields[0].VarKind));
         if (s.Properties.TryGetValue(name, out var props))
             return new Member(new ValueRes(props[0].Type), IsStatic(props[0].Declaration.MemberMods));
         if (s.Functions.TryGetValue(name, out var funcs))

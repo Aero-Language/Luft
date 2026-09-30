@@ -20,7 +20,9 @@ public static class Extensions
     
     // Identifier extensions
     public static string[] IdentifierParts(this string ident) => ident.Split(".");
-    public static string FirstIdentifier(this string ident) => ident[..ident.IndexOf('.')];
+    public static string FirstIdentifier(this string ident) => ident.Contains('.') 
+        ? ident[..ident.IndexOf('.')] 
+        : ident;
     
     
     // Helper constants

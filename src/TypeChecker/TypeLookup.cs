@@ -1,10 +1,13 @@
 using Luft.Ast.Nodes;
 using Luft.TypeChecker.Symbols;
+using Luft.Utility;
 
 namespace Luft.TypeChecker;
 
 public class TypeLookup : AstVisitor
 {
+    protected override CompilerStage Stage => CompilerStage.TypeLookup;
+    
     private TypeTable Table { get; set; } = null!;
     private ModuleSymbol CurrentModule { get; set; } = null!;
     private TypeScope CurrentScope { get; set; } = null!;
@@ -79,7 +82,7 @@ public class TypeLookup : AstVisitor
     }
     protected override void VisitStruct(StructDeclarationNode node)
     {
-        var symbol = new StructSymbol(node, CurrentModule, CurrentScope) { Scope = new TypeScope(CurrentScope) };
+        var symbol = new StructSymbol(node, CurrentModule, CurrentScope) { Scope = new TypeScope(CurrentScope) { GenericNames = node.GenericParameters.Select(g => g.Name).ToHashSet() } };
 
         foreach (var decl in node.Declarations)
         {

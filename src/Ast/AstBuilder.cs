@@ -18,6 +18,7 @@ public sealed class AstBuilder : SafeIterator<Token>
         TokenType.XorAssign, TokenType.LeftShiftAssign, TokenType.RightShiftAssign
     ];
 
+    protected override CompilerStage Stage => CompilerStage.Parser;
     public AstBuilder()
     {
         Denied = token => ExcludedTypes.Contains(token.Type);
@@ -242,6 +243,8 @@ public sealed class AstBuilder : SafeIterator<Token>
 
         var name = PopIdentifier();
         
+        var generics = PopGenericDecls();
+        
         List<DeclarationNode> decls = [];
         if (Peek().Type is TokenType.ParenthesisOpen)
         {
@@ -257,7 +260,7 @@ public sealed class AstBuilder : SafeIterator<Token>
         }
         ExpectType(TokenType.BracketClose, "Expect '}'");
         
-        return new StructDeclarationNode(annotations.OrNew(), access, inheritance, memberMod, name, decls.ToValueList(), implementations, startSpan.To(Peek().Span));
+        return new StructDeclarationNode(annotations.OrNew(), access, inheritance, memberMod, name, generics, decls.ToValueList(), implementations, startSpan.To(Peek().Span));
     }
     RecordDeclarationNode PopRecord(ValueList<AnnotationStatementNode>? annotations, AccessMod? accessMod, MemberMod memberMod, InheritanceMod inheritance)
     {

@@ -88,6 +88,7 @@ public class PrettyPrinter(int indentAmount = 4, bool isLib = false) : PrinterBa
         if (node.InheritanceMod is not InheritanceMod.None) text += $"{node.InheritanceMod.AsString()} ";
         
         text += $"struct {node.Name}";
+        if (node.GenericParameters.Any()) text += $"<{string.Join(", ", node.GenericParameters)}>";
         if (node.Declarations.Any(n => n is PrimaryConstructorDeclarationNode)) text += Visit(node.Declarations.OfType<PrimaryConstructorDeclarationNode>().First());
         if (node.Implements.Any()) text += $": {string.Join(", ", node.Implements)}";
 

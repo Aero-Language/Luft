@@ -52,6 +52,7 @@ public record StructDeclarationNode
     InheritanceMod InheritanceMod,
     MemberMod MemberMods,
     string Name,
+    ValueList<GenericParameterType> GenericParameters,
     ValueList<DeclarationNode> Declarations,
     ValueList<AeroType> Implements,
     SourceSpan Span

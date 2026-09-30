@@ -11,6 +11,7 @@ public sealed class Tokenizer : SafeIterator<char>
 
     private List<Token> Tokens { get; set; } = [];
 
+    protected override CompilerStage Stage => CompilerStage.Lexer;
     public Tokenizer()
     {
         PopTask = amount =>

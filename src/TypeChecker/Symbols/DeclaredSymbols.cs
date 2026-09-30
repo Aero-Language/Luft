@@ -15,13 +15,16 @@ public sealed class ClassSymbol : TypeSymbol
     public ClassDeclarationNode Node { get; }
 }
 
-public sealed class StructSymbol(StructDeclarationNode node, ModuleSymbol module, TypeScope? containing)
-    : TypeSymbol(node.Name,
-        node.AccessMod, module, containing, node.Span)
+public sealed class StructSymbol : TypeSymbol
 {
-    // No GenericParameters to wire here: StructDeclarationNode has no generic parameter list —
-    // structs aren't generic in the grammar, unlike class/record/trait/annotation.
-    public StructDeclarationNode Node { get; } = node;
+    public StructSymbol(StructDeclarationNode node, ModuleSymbol module, TypeScope? containing) : base(node.Name,
+        node.AccessMod, module, containing, node.Span)
+    {
+        Node = node;
+        GenericParameters = node.GenericParameters;
+    }
+
+    public StructDeclarationNode Node { get; }
 }
 
 public sealed class TraitSymbol : TypeSymbol

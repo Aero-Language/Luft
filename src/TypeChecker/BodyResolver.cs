@@ -8,6 +8,8 @@ namespace Luft.TypeChecker;
 
 public class BodyResolver : AeroThrower
 {
+    protected override CompilerStage Stage => CompilerStage.BodyResolver;
+    
     private static readonly HashSet<AeroType> NumericTypes = [AeroType.Int, AeroType.Float, AeroType.Byte];
 
     private TypeTable Table { get; set; } = null!;

@@ -5,6 +5,8 @@ namespace Luft.TypeChecker;
 
 public sealed class TypeResolver : AeroThrower
 {
+    protected override CompilerStage Stage => CompilerStage.TypeResolver;
+    
     private TypeTable Table { get; set; } = null!;
     
     public void Run(TypeTable typeTable)

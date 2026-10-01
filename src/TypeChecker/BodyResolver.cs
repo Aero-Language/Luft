@@ -271,7 +271,8 @@ public class BodyResolver : AeroThrower
     // A constructed generic type has <auto> arguments (the call carries none), so those match anything
     private static bool IsAssignable(AeroType from, AeroType to)
     {
-        if (from == to) return true;
+        if (from == to || from.IsAuto || to.IsAuto) return true;
+        if (from is ArrayType fa && to is ArrayType ta) return IsAssignable(fa.ElementType, ta.ElementType);
         if (from is GenericType f && to is GenericType t
             && f.Definition.Name == t.Definition.Name
             && f.TypeArguments.Count == t.TypeArguments.Count)
@@ -531,7 +532,6 @@ public class BodyResolver : AeroThrower
         return new ArrayType(result);
     }
 
-    // ---- Calls ----------------------------------------------------------
 
     private AeroType ResolveCall(CallExpressionNode expr, TypeScope scope, BodyScope bScope)
     {
@@ -565,13 +565,29 @@ public class BodyResolver : AeroThrower
         }
 
         var argTypes = expr.Arguments.Select(a => ResolveExpression(a, scope, bScope)).ToArray();
-        var matches = fn.Overloads.Where(o => ParametersMatch(o.Parameters, argTypes)).ToList();
+        var explicitArgs = (expr.Target switch
+        {
+            IdentifierExpressionNode i => i,
+            MemberAccessExpressionNode { Member: IdentifierExpressionNode m } => m,
+            _ => null
+        })?.TypeArguments;
+
+        var matches = new List<(FunctionSymbol Fn, Dictionary<string, AeroType> Bound)>();
+        foreach (var o in fn.Overloads)
+        {
+            var generics = o.GenericParameters.Select(g => g.Name).ToHashSet();
+            var bound = new Dictionary<string, AeroType>();
+            if (explicitArgs is not null && explicitArgs.Count == o.GenericParameters.Count)
+                for (int i = 0; i < explicitArgs.Count; i++) bound[o.GenericParameters[i].Name] = explicitArgs[i];
+
+            if (ParametersMatch(SubstParams(o.Parameters, fn.Substitute), argTypes, generics, bound)) matches.Add((o, bound));
+        }
 
         return matches.Count switch
         {
             0 => Fail($"No overload of '{fn.Overloads[0].Name}' matches the given arguments", expr.Span),
             > 1 => Fail($"Call to '{fn.Overloads[0].Name}' is ambiguous between {matches.Count} overloads", expr.Span),
-            _ => matches[0].ReturnType
+            _ => Subst(Subst(matches[0].Fn.ReturnType, fn.Substitute), matches[0].Bound)
         };
     }
 
@@ -628,9 +644,10 @@ public class BodyResolver : AeroThrower
 
     // True if `argTypes` could be passed positionally to `parameters` — arity (accounting
     // for parameters that have a default initializer) plus per-position type equality.
-    private static bool ParametersMatch(ValueList<ParamSymbol> parameters, AeroType[] argTypes, ICollection<string>? generics = null)
+    private static bool ParametersMatch(ValueList<ParamSymbol> parameters, AeroType[] argTypes, ICollection<string>? generics = null, Dictionary<string, AeroType>? bound = null)
     {
         generics ??= Array.Empty<string>();
+        bound ??= new();
         if (argTypes.Length > parameters.Count) return false;
 
         var requiredCount = parameters.Count(p => p.Initializer is null);
@@ -639,18 +656,129 @@ public class BodyResolver : AeroThrower
         for (int i = 0; i < argTypes.Length; i++)
         {
             if (argTypes[i] == AeroType.Error) continue; // already reported upstream, don't cascade
-            if (!ArgFits(argTypes[i], parameters[i].Type, generics)) return false;
+            if (!Unify(parameters[i].Type, argTypes[i], generics, bound)) return false;
         }
 
         return true;
     }
-    // A bare generic parameter accepts anything; arrays are compared by element
-    private static bool ArgFits(AeroType arg, AeroType param, ICollection<string> generics)
+
+    // Matches an argument against a parameter type; generic parameters bind to what they meet
+    private static bool Unify(AeroType param, AeroType arg, ICollection<string> generics, Dictionary<string, AeroType> bound)
     {
-        if (param is ScalarType s && generics.Contains(s.Name)) return true;
-        if (param is ArrayType pa && arg is ArrayType aa) return ArgFits(aa.ElementType, pa.ElementType, generics);
+        if (arg == AeroType.Error) return true;
+
+        if (param is ScalarType s && generics.Contains(s.Name))
+        {
+            if (arg.IsAuto) return true;
+            if (bound.TryGetValue(s.Name, out var prior)) return prior == arg || prior.IsAuto;
+            bound[s.Name] = arg;
+            return true;
+        }
+
+        if (param is ArrayType pa && arg is ArrayType aa)
+            return aa.ElementType.IsAuto || Unify(pa.ElementType, aa.ElementType, generics, bound);
+
+        if (param is LambdaType pl && arg is LambdaType al)
+        {
+            if (al.Parameters.Count != 0) // no parameters means the implicit 'it' form
+            {
+                if (pl.Parameters.Count != al.Parameters.Count) return false;
+                for (int i = 0; i < pl.Parameters.Count; i++)
+                    if (!Unify(pl.Parameters[i].Type, al.Parameters[i].Type, generics, bound)) return false;
+            }
+            return Unify(pl.ReturnType, al.ReturnType, generics, bound);
+        }
+
+        if (param is GenericType pg && arg is GenericType ag)
+        {
+            if (pg.Definition.Name != ag.Definition.Name || pg.TypeArguments.Count != ag.TypeArguments.Count) return false;
+            for (int i = 0; i < pg.TypeArguments.Count; i++)
+            {
+                var (pArg, aArg) = (pg.TypeArguments[i], ag.TypeArguments[i]);
+                if (aArg.Name == AeroType.Auto.Name) continue;
+                if (generics.Contains(pArg.Name))
+                {
+                    var value = ArgToType(aArg);
+                    if (bound.TryGetValue(pArg.Name, out var prior)) { if (prior != value) return false; }
+                    else bound[pArg.Name] = value;
+                }
+                else if (pArg.Name != aArg.Name) return false;
+            }
+            return true;
+        }
+
         return IsAssignable(arg, param);
     }
+
+    private static AeroType ArgToType(GenericParameterType p)
+        => p.Name == AeroType.Auto.Name ? AeroType.Auto : new ScalarType(p.Name, p.IsRef, p.IsNullable);
+
+    // Maps a generic type's parameter names to the arguments of the concrete type being accessed
+    private static Dictionary<string, AeroType> TypeArgMap(TypeSymbol symbol, AeroType receiver)
+    {
+        var map = new Dictionary<string, AeroType>();
+        if (receiver is GenericType g && g.TypeArguments.Count == symbol.GenericParameters.Count)
+            for (int i = 0; i < g.TypeArguments.Count; i++)
+                map[symbol.GenericParameters[i].Name] = ArgToType(g.TypeArguments[i]);
+        return map;
+    }
+
+    private static AeroType Subst(AeroType type, Dictionary<string, AeroType>? map)
+    {
+        if (map is null || map.Count == 0) return type;
+
+        switch (type)
+        {
+            case ScalarType s when map.TryGetValue(s.Name, out var replacement):
+                return replacement is ScalarType r
+                    ? r with { IsRef = s.IsRef || r.IsRef, IsNullable = s.IsNullable || r.IsNullable }
+                    : replacement;
+            case ArrayType a:
+                return new ArrayType(Subst(a.ElementType, map), a.IsRef, a.IsNullable);
+            case GenericType g:
+                var args = g.TypeArguments.Select(p => map.TryGetValue(p.Name, out var m)
+                    ? (m is ScalarType ms ? new GenericParameterType(ms.Name, null, ms.IsRef || p.IsRef, ms.IsNullable || p.IsNullable) : new GenericParameterType(m.ToString()))
+                    : p).ToValueList();
+                return new GenericType(g.Definition, args);
+            case LambdaType l:
+                return new LambdaType(l.Parameters.Select(p => new TypeParam(p.Name, Subst(p.Type, map))).ToValueList(), Subst(l.ReturnType, map), l.IsRef, l.IsNullable);
+            default:
+                return type;
+        }
+    }
+
+    private static ValueList<ParamSymbol> SubstParams(ValueList<ParamSymbol> parameters, Dictionary<string, AeroType>? map)
+        => map is null || map.Count == 0 ? parameters : parameters.Select(p => p with { Type = Subst(p.Type, map) }).ToValueList();
+
+    private static bool TargetMatches(AeroType target, AeroType receiver) => (target, receiver) switch
+    {
+        (GenericType t, GenericType r) => t.Definition.Name == r.Definition.Name
+            && t.TypeArguments.Count == r.TypeArguments.Count
+            && t.TypeArguments.Zip(r.TypeArguments).All(p => p.First.Name == p.Second.Name || p.Second.Name == AeroType.Auto.Name),
+        (ArrayType t, ArrayType r) => TargetMatches(t.ElementType, r.ElementType),
+        (ScalarType t, ScalarType r) => t.Name == r.Name,
+        _ => false
+    };
+
+    // Extension functions visible from here whose target fits the receiver; the table key may be 'Target.Name'
+    private List<FunctionSymbol> FindExtensions(AeroType receiver, string name, TypeScope scope, string file)
+    {
+        var result = new List<FunctionSymbol>();
+
+        void Collect(TypeScope s)
+        {
+            foreach (var (key, list) in s.ExtensionFunctions)
+                if (key.Split('.')[^1] == name)
+                    result.AddRange(list.Where(f => f.ExtensionTarget is not null && TargetMatches(f.ExtensionTarget, receiver)));
+        }
+
+        for (var s = scope; s is not null; s = s.ContainingScope) Collect(s);
+        foreach (var import in ImportsOf(file))
+            if (Table.Modules.TryGetValue(import.TargetPath, out var module)) Collect(module.Scope);
+
+        return result;
+    }
+
     private static bool ArgsMatch(AeroType[] paramTypes, AeroType[] argTypes)
     {
         if (paramTypes.Length != argTypes.Length) return false;
@@ -662,7 +790,6 @@ public class BodyResolver : AeroThrower
         return true;
     }
 
-    // ---- Binary / Unary ---------------------------------------------------
 
     private AeroType ResolveBinary(BinaryExpressionNode expr, TypeScope scope, BodyScope bScope)
     {
@@ -791,7 +918,6 @@ public class BodyResolver : AeroThrower
         };
     }
 
-    // ---- Indexing / Ranges / Interpolation / Lambdas ----------------------
 
     private AeroType ResolveIndex(IndexExpressionNode expr, TypeScope scope, BodyScope bScope)
     {
@@ -901,13 +1027,27 @@ public class BodyResolver : AeroThrower
 
             case ValueRes v:
             {
-                var symbol = FindType(v.Type, scope, expr.Span.FilePath);
+                var file = expr.Span.FilePath;
+                var symbol = FindType(v.Type, scope, file);
+                if (symbol is null || FindMember(symbol, name, []) is null)
+                {
+                    var extensions = FindExtensions(v.Type, name, scope, file);
+                    if (extensions.Count > 0) return new FunctionsRes(extensions);
+                }
                 if (symbol is null)
                 {
                     Error($"Cannot access members of type '{v.Type}'", expr.Span);
                     return Failed;
                 }
-                return Access(symbol, name, wantStatic: false, expr.Span);
+
+                var accessed = Access(symbol, name, wantStatic: false, expr.Span);
+                var map = TypeArgMap(symbol, v.Type);
+                return accessed switch
+                {
+                    ValueRes r => new ValueRes(Subst(r.Type, map)),
+                    FunctionsRes f => f with { Substitute = map },
+                    _ => accessed
+                };
             }
             case FunctionsRes:
                 Error("Cannot access members of a function", expr.Span);
@@ -991,9 +1131,9 @@ public class BodyResolver : AeroThrower
         if (type is EnumSymbol e)
         {
             if (e.Members.Any(m => m.Name == name))
-                return new Member(new ValueRes(new ScalarType(e.Name)), IsStatic: true);
+                return new Member(new ValueRes(new ScalarType(e.Name)), IsStaticMember: true);
             if (e.Parameters.FirstOrDefault(p => p.Name == name) is { } param)
-                return new Member(new ValueRes(param.Type), IsStatic: false);
+                return new Member(new ValueRes(param.Type), IsStaticMember: false);
         }
 
         var s = type.Scope;
@@ -1004,7 +1144,7 @@ public class BodyResolver : AeroThrower
         if (s.Functions.TryGetValue(name, out var funcs))
             return new Member(new FunctionsRes(funcs), funcs.All(f => f.MemberMods.HasFlag(MemberMod.Static)));
         if (s.Types.TryGetValue(name, out var nested))
-            return new Member(new TypeRes(nested[0]), IsStatic: true);
+            return new Member(new TypeRes(nested[0]), IsStaticMember: true);
 
         foreach (var b in BasesOf(type))
             if (FindMember(b, name, seen) is { } inherited) return inherited;
@@ -1028,12 +1168,12 @@ public class BodyResolver : AeroThrower
             Error($"'{symbol.Name}' has no member '{name}'", span);
             return Failed;
         }
-        if (wantStatic && !member.IsStatic)
+        if (wantStatic && !member.IsStaticMember)
         {
             Error($"'{name}' is an instance member and needs an instance of '{symbol.Name}'", span);
             return Failed;
         }
-        if (!wantStatic && member.IsStatic)
+        if (!wantStatic && member.IsStaticMember)
         {
             Error($"'{name}' is static, access it through '{symbol.Name}'", span);
             return Failed;
@@ -1048,8 +1188,8 @@ public class BodyResolver : AeroThrower
             case FunctionsRes { Overloads: [var only] }:
                 return new LambdaType(only.Parameters.Select(p => new TypeParam(p.Name, p.Type)).ToValueList(), only.ReturnType);
             case FunctionsRes: Error("An overloaded function cannot be used as a value", span); return AeroType.Error;
-            case TypeRes t:    Error($"'{t.Symbol.Name}' is a type, not a value", span);         return AeroType.Error;
-            case ModuleRes m:  Error($"'{m.Path}' is a module, not a value", span);              return AeroType.Error;
+            case TypeRes t:    Error($"'{t.Symbol.Name}' is a type, not a value", span); return AeroType.Error;
+            case ModuleRes m:  Error($"'{m.Path}' is a module, not a value", span); return AeroType.Error;
             default: return AeroType.Error; // ErrorRes
         }
     }
@@ -1060,9 +1200,9 @@ public class BodyResolver : AeroThrower
     private sealed record ValueRes(AeroType Type) : Resolved;
     private sealed record TypeRes(TypeSymbol Symbol) : Resolved;
     private sealed record ModuleRes(string Path) : Resolved;
-    private sealed record FunctionsRes(List<FunctionSymbol> Overloads) : Resolved;
-    private sealed record ErrorRes : Resolved;   // error already reported, stay silent
+    private sealed record FunctionsRes(List<FunctionSymbol> Overloads, Dictionary<string, AeroType>? Substitute = null) : Resolved;
+    private sealed record ErrorRes : Resolved; // error already reported, stay silent
     private static readonly ErrorRes Failed = new();
 
-    private sealed record Member(Resolved Result, bool IsStatic);
+    private sealed record Member(Resolved Result, bool IsStaticMember);
 }

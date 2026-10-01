@@ -6,9 +6,27 @@
         <RootNamespace>Luft.Cli</RootNamespace>
         <ImplicitUsings>enable</ImplicitUsings>
         <Nullable>enable</Nullable>
-        <PublishAot>true</PublishAot>
     </PropertyGroup>
 
+    <PropertyGroup>
+        <PublishTrimmed>true</PublishTrimmed>
+        <TrimMode>partial</TrimMode>
+        
+        <EnableCompressionInSingleFile>true</EnableCompressionInSingleFile>
+
+        <DebuggerSupport>false</DebuggerSupport>
+        <DebugSymbols>false</DebugSymbols>
+        <DebugType>none</DebugType>
+
+        <EnableUnsafeBinaryFormatterSerialization>false</EnableUnsafeBinaryFormatterSerialization>
+        <EventSourceSupport>false</EventSourceSupport>
+        <HttpActivityPropagationSupport>false</HttpActivityPropagationSupport>
+        <MetadataUpdaterSupport>false</MetadataUpdaterSupport>
+        <UseSystemResourceKeys>true</UseSystemResourceKeys>
+
+        <InvariantGlobalization>true</InvariantGlobalization>
+    </PropertyGroup>
+    
     <ItemGroup>
       <ProjectReference Include="..\Builder\Builder.csproj" />
       <ProjectReference Include="..\Ast\Ast.csproj" />

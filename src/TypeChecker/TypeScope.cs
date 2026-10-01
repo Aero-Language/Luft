@@ -1,3 +1,4 @@
+using Luft.Ast.Nodes;
 using Luft.TypeChecker.Symbols;
 using Luft.Utility;
 
@@ -12,6 +13,10 @@ public sealed class TypeScope(TypeScope? containing)
     public Dictionary<string, List<FunctionSymbol>> Functions { get; } = new();
     public Dictionary<string, List<PropertySymbol>> Properties { get; } = new();
     public Dictionary<string, List<FieldSymbol>> Fields { get; } = new();
+    
+    // Explicit `constructor` declarations, plus the inline `Type(var X: Int)` form if present
+    public List<ConstructorSymbol> Constructors { get; } = [];
+    public PrimaryConstructorDeclarationNode? PrimaryConstructor { get; set; }
     
     // ToDo: Extensions should be checked if their signature is already a member of the target
     public Dictionary<string, List<FunctionSymbol>> ExtensionFunctions { get; } = new();

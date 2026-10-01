@@ -123,11 +123,17 @@ public class BodyResolver : AeroThrower
     {
         foreach (var property in properties)
         {
+            // 'it' is the property's implicit backing value inside its accessors
+            var previousIt = CurrentItType;
+            CurrentItType = property.Type;
+            
             if (property.Getter?.Body is not null)
                 CheckStatements(property.Getter.Body.Statements, scope);
             
             if (property.Setter?.Body is not null)
                 CheckStatements(property.Setter.Body.Statements, scope, SetterScope(property.Type, property.Span));
+            
+            CurrentItType = previousIt;
             
             if (property.Initializer is not null)
             {
@@ -259,7 +265,21 @@ public class BodyResolver : AeroThrower
     {
         if (t1 is null || t2 is null) return;
         if (t1 == AeroType.Error || t2 == AeroType.Error) return;
-        if (t1 != t2) Error($"Cannot convert type '{t1}' to '{t2}'", span);
+        if (!IsAssignable(t1, t2)) Error($"Cannot convert type '{t1}' to '{t2}'", span);
+    }
+
+    // A constructed generic type has <auto> arguments (the call carries none), so those match anything
+    private static bool IsAssignable(AeroType from, AeroType to)
+    {
+        if (from == to) return true;
+        if (from is GenericType f && to is GenericType t
+            && f.Definition.Name == t.Definition.Name
+            && f.TypeArguments.Count == t.TypeArguments.Count)
+        {
+            return f.TypeArguments.Zip(t.TypeArguments).All(p => p.First.Name == AeroType.Auto.Name || p.First == p.Second);
+        }
+
+        return false;
     }
 
     // Maps each compound-assignment operator to the plain binary operator it stands in for.
@@ -529,6 +549,9 @@ public class BodyResolver : AeroThrower
             return lambda.ReturnType;
         }
 
+        // Calling a type by name is a constructor call
+        if (target is TypeRes typeRes) return ResolveConstructorCall(typeRes.Symbol, expr, scope, bScope);
+
         if (target is not FunctionsRes fn)
         {
             // Still resolve the arguments so further diagnostics inside them aren't lost
@@ -552,10 +575,62 @@ public class BodyResolver : AeroThrower
         };
     }
 
+    private AeroType ResolveConstructorCall(TypeSymbol type, CallExpressionNode expr, TypeScope scope, BodyScope bScope)
+    {
+        var argTypes = expr.Arguments.Select(a => ResolveExpression(a, scope, bScope)).ToArray();
+
+        if (type is not (ClassSymbol or StructSymbol or RecordSymbol))
+            return Fail($"'{type.Name}' cannot be constructed", expr.Span);
+
+        // The call has no type arguments, so the type's own generic parameters match any argument
+        var generics = type.GenericParameters.Select(g => g.Name).ToHashSet();
+        var matches = ConstructorsOf(type).Where(p => ParametersMatch(p, argTypes, generics)).ToList();
+
+        return matches.Count switch
+        {
+            0 => Fail($"No constructor of '{type.Name}' matches the given arguments", expr.Span),
+            > 1 => Fail($"Constructor call for '{type.Name}' is ambiguous between {matches.Count} constructors", expr.Span),
+            _ => ConstructedType(type)
+        };
+    }
+
+    // Parameter lists a call can target: declared constructors and the primary one. With none
+    // declared, a record takes its fields in order and anything else gets the empty default.
+    private static List<ValueList<ParamSymbol>> ConstructorsOf(TypeSymbol type)
+    {
+        var result = type.Scope.Constructors.Select(c => c.Parameters).ToList();
+
+        if (type.Scope.PrimaryConstructor is { } primary)
+            result.Add(primary.Variables.Select(v => new ParamSymbol(v.Name, v.Type, v.VarKind, v.Initializer)).ToValueList());
+
+        if (result.Count > 0) return result;
+
+        result.Add(ValueList<ParamSymbol>.Empty);
+        if (type is RecordSymbol)
+        {
+            var fields = type.Scope.Fields.Values.SelectMany(f => f)
+                .Where(f => !IsStatic(f.Declaration.MemberMods, f.VarKind))
+                .Select(f => new ParamSymbol(f.Name, f.Type, f.VarKind, f.Initializer))
+                .ToValueList();
+            if (fields.Count > 0) result.Add(fields);
+        }
+
+        return result;
+    }
+
+    private static AeroType ConstructedType(TypeSymbol type)
+    {
+        var bare = new ScalarType(type.Name);
+        return type.GenericParameters.Count == 0
+            ? bare
+            : new GenericType(bare, type.GenericParameters.Select(_ => new GenericParameterType(AeroType.Auto.Name)).ToValueList());
+    }
+
     // True if `argTypes` could be passed positionally to `parameters` — arity (accounting
     // for parameters that have a default initializer) plus per-position type equality.
-    private static bool ParametersMatch(ValueList<ParamSymbol> parameters, AeroType[] argTypes)
+    private static bool ParametersMatch(ValueList<ParamSymbol> parameters, AeroType[] argTypes, ICollection<string>? generics = null)
     {
+        generics ??= Array.Empty<string>();
         if (argTypes.Length > parameters.Count) return false;
 
         var requiredCount = parameters.Count(p => p.Initializer is null);
@@ -564,10 +639,17 @@ public class BodyResolver : AeroThrower
         for (int i = 0; i < argTypes.Length; i++)
         {
             if (argTypes[i] == AeroType.Error) continue; // already reported upstream, don't cascade
-            if (argTypes[i] != parameters[i].Type) return false;
+            if (!ArgFits(argTypes[i], parameters[i].Type, generics)) return false;
         }
 
         return true;
+    }
+    // A bare generic parameter accepts anything; arrays are compared by element
+    private static bool ArgFits(AeroType arg, AeroType param, ICollection<string> generics)
+    {
+        if (param is ScalarType s && generics.Contains(s.Name)) return true;
+        if (param is ArrayType pa && arg is ArrayType aa) return ArgFits(aa.ElementType, pa.ElementType, generics);
+        return IsAssignable(arg, param);
     }
     private static bool ArgsMatch(AeroType[] paramTypes, AeroType[] argTypes)
     {

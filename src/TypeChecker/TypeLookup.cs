@@ -161,9 +161,15 @@ public class TypeLookup : AstVisitor
     }
     protected override void VisitPrimaryConstructor(PrimaryConstructorDeclarationNode node)
     {
+        CurrentScope.PrimaryConstructor = node;
+        
         // `struct Vector2(var X: Float, var Y: Float)` declares its fields inline here rather
         // than in the body — without this override they never reach CurrentScope.Fields at all.
         foreach (var field in node.Variables) Visit(field);
+    }
+    protected override void VisitConstructor(ConstructorDeclarationNode node)
+    {
+        CurrentScope.Constructors.Add(new ConstructorSymbol(node.AccessMod, node));
     }
 
     #endregion

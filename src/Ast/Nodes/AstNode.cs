@@ -10,6 +10,10 @@ public abstract record StatementNode(SourceSpan Span) : AstNode(Span);
 
 public abstract record ExpressionNode(SourceSpan Span) : AstNode(Span);
 
+// Placeholder the parser returns where an expression was expected but none could be parsed.
+// The error is already reported at parse time, so later stages should stay silent about it.
+public record ErrorExpressionNode(SourceSpan Span) : ExpressionNode(Span);
+
 public record FileNode(ModuleDeclarationNode[] Modules, ImportStatementNode[] Imports, SourceSpan Span) : AstNode(Span);
 
 public record PropertyAccessorNode

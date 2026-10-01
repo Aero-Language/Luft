@@ -116,7 +116,9 @@ public sealed class AstBuilder : SafeIterator<Token>
             "trait" => PopTrait(annotations, accessMod, inheritance),
             "enum" => PopEnum(annotations, accessMod),
             "annotation" => PopAnnotationDecl(annotations, accessMod, memberMod),
-            "fun" => PopFunction(annotations, accessMod, memberMod, inheritance),
+            "fun" or "op" => PopFunction(annotations, accessMod, memberMod, inheritance),
+            // 'operator' is only a keyword when it directly precedes 'fun', so it stays usable as a name elsewhere
+            "operator" when Peek(1).Type is TokenType.InstanceKind && Peek(1).Value == "fun" => PopFunction(annotations, accessMod, memberMod, inheritance),
             "extension" => PopExtension(annotations, accessMod, memberMod, inheritance),
             "extensions" => PopExtensionBlock(accessMod),
             "constructor" => PopConstructor(annotations, accessMod),
@@ -154,15 +156,54 @@ public sealed class AstBuilder : SafeIterator<Token>
         return new ModuleDeclarationNode(identifier, decls.ToArray(), Peek().Span);
     }
     DeclarationNode PopFunction(ValueList<AnnotationStatementNode>? annotations, AccessMod? accessMod, MemberMod memberMod, InheritanceMod inheritance)
+        => PopFunction(annotations, accessMod, memberMod, inheritance, out _);
+
+    // `receiver` is the parsed target type of an `extension fun Target.Name(...)`, null for everything else.
+    DeclarationNode PopFunction(ValueList<AnnotationStatementNode>? annotations, AccessMod? accessMod, MemberMod memberMod, InheritanceMod inheritance, out AeroType? receiver)
     {
         var startSpan = Peek().Span;
         var access = accessMod ?? AccessModExtensions.FunctionDefault;
 
-        if (Peek().Type is TokenType.InstanceKind && Peek().Value == "extension") Pop();
-        bool isOp = Peek().Type is TokenType.InstanceKind && Peek().Value == "op";
-        ExpectInstance(["fun"], "Expected 'fun' keyword");
+        receiver = null;
+        bool isExtension = Peek().Type is TokenType.InstanceKind && Peek().Value == "extension";
+        if (isExtension) Pop();
         
-        var name = PopIdentifier();
+        bool isOp = IsOperatorKeyword();
+        if (isOp) Pop();
+        ExpectInstance(["fun"], "Expected 'fun' keyword");
+
+        string name;
+        if (isExtension)
+        {
+            // `extension fun Container<Int>.Sum()` or `extension fun Int.IsEven()`
+            var target = PopType();
+            string memberName;
+            if (Peek().Type is TokenType.Dot)
+            {
+                Pop();
+                memberName = PopIdentifier();
+            }
+            else if (target is ScalarType { Name: var dotted } scalar && dotted.Contains('.'))
+            {
+                // PopIdentifier already glued 'Int.IsEven' into one name; split it back apart
+                var split = dotted.LastIndexOf('.');
+                target = new ScalarType(dotted[..split], scalar.IsRef, scalar.IsNullable);
+                memberName = dotted[(split + 1)..];
+            }
+            else
+            {
+                Error("Expected '.' and a function name after the extension target type", Peek().Span);
+                memberName = "<error>";
+            }
+
+            receiver = target;
+            name = $"{target.Name}.{memberName}";
+        }
+        else
+        {
+            name = PopIdentifier();
+        }
+        
         var opString = isOp ? name.IdentifierParts().Last() : "";
         var generics = !isOp ? PopGenericDecls() : []; // operator overloads don't get their own generic parameter list
         var parameters = PopParameterDecl();
@@ -184,34 +225,36 @@ public sealed class AstBuilder : SafeIterator<Token>
             PopStatementTerminator();
         }
 
-        if (isOp) return new OperatorDeclarationNode(annotations.OrNew(), access, inheritance, memberMod, returning, name, opString.ToOperator(), parameters, body, startSpan.To(Peek().Span.End));
+        if (isOp)
+        {
+            // The name after 'fun' is the Operator enum member it overloads: `operator fun Add(...)`
+            Operator opValue = default;
+            if (!(Enum.TryParse(opString, out opValue) && Enum.IsDefined(opValue)))
+                Error($"'{opString}' is not an overloadable operator", startSpan);
+            
+            return new OperatorDeclarationNode(annotations.OrNew(), access, inheritance, memberMod, returning, name, opValue, parameters, body, startSpan.To(Peek().Span.End));
+        }
         return new FunctionDeclarationNode(annotations.OrNew(), access, inheritance, memberMod, returning, name, generics.ToValueList(), parameters, body, startSpan.To(Peek().Span.End));
     }
     ExtensionDeclarationNode PopExtension(ValueList<AnnotationStatementNode>? annotations, AccessMod? accessMod, MemberMod memberMod, InheritanceMod inheritance)
     {
-        string targetType;
-        DeclarationNode decl;
         var kind = Peek(1); // Peek() is 'extension', so check the next one
-        if (kind.Type is TokenType.InstanceKind && kind.Value == "fun") 
-        {
-            var node = (FunctionDeclarationNode)PopFunction(annotations, accessMod, memberMod, inheritance);
-            decl = node;
-            targetType = node.Name.FirstIdentifier();
-        }
-        else if (kind.Type is TokenType.InstanceKind && kind.Value == "op")
-        {
-            var node = (OperatorDeclarationNode)PopFunction(annotations, accessMod, memberMod, inheritance);
-            decl = node;
-            targetType = node.Name.FirstIdentifier();
-        }
-        else
-        {
-            var node = PopProperty(annotations, accessMod, memberMod, inheritance);
-            decl = node;
-            targetType = node.Name.FirstIdentifier();
-        }
         
-        return new ExtensionDeclarationNode(decl, targetType.ToType(), decl.Span);
+        if (kind.Value is "fun" or "op" or "operator")
+        {
+            var decl = PopFunction(annotations, accessMod, memberMod, inheritance, out var receiver);
+            var name = decl switch
+            {
+                FunctionDeclarationNode f => f.Name,
+                OperatorDeclarationNode o => o.Name,
+                _ => ""
+            };
+            
+            return new ExtensionDeclarationNode(decl, receiver ?? name.FirstIdentifier().ToType(), decl.Span);
+        }
+
+        var prop = PopProperty(annotations, accessMod, memberMod, inheritance);
+        return new ExtensionDeclarationNode(prop, prop.Name.FirstIdentifier().ToType(), prop.Span);
     }
     ExtensionBlockDeclarationNode PopExtensionBlock(AccessMod? accessMod)
     {
@@ -752,8 +795,13 @@ public sealed class AstBuilder : SafeIterator<Token>
                 or TokenType.SquareOpen:
                 return PopLiteral();
             default:
-                Error($"Unexpected token: {firstToken}", Peek().Span);
-                return null!;
+                // Consume the offending token, otherwise every loop that keeps calling
+                // PopExpression/PopStatement until a closing token would spin on it forever.
+                // Eof is left alone: the surrounding loops already stop on it.
+                var badToken = Peek();
+                Error($"Unexpected token: {firstToken}", badToken.Span);
+                if (firstToken is not TokenType.Eof) Pop();
+                return new ErrorExpressionNode(badToken.Span);
         }
     }
     ExpressionNode PopPostfix(bool allowUnparenthesizedBlock = true)
@@ -816,7 +864,11 @@ public sealed class AstBuilder : SafeIterator<Token>
 
             while (Peek().Type is not TokenType.BracketClose and not TokenType.Eof)
             {
+                var before = Index;
                 statements.Add(PopStatement());
+                
+                // Safety net: a statement that consumed nothing would repeat forever
+                if (Index == before) Pop();
             }
             
             ExpectType(TokenType.BracketClose, "Expected '}'");
@@ -1045,7 +1097,13 @@ public sealed class AstBuilder : SafeIterator<Token>
     IdentifierExpressionNode PopIdentifierExpr()
     {
         var token = ExpectType(TokenType.Identifier, "Expected an identifier");
-        return new IdentifierExpressionNode(token.Value, token.Span);
+        
+        // `Foo<A, B>(...)` / `Foo<A>.Member` — only when the lookahead says this '<' opens type
+        // arguments rather than being a less-than comparison
+        ValueList<AeroType>? typeArguments = null;
+        if (IsGenericArgumentList()) typeArguments = PopTypeArguments();
+        
+        return new IdentifierExpressionNode(token.Value, token.Span, typeArguments);
     }
     MemberAccessExpressionNode PopMemberAccess(ExpressionNode source)
     {
@@ -1245,7 +1303,9 @@ public sealed class AstBuilder : SafeIterator<Token>
         ExpectType(TokenType.BracketOpen, "Expected '{'");
 
         List<ParamNode> parameters = [];
-        if (Peek().Type is TokenType.Identifier) // a named parameter list, if any
+        // Only treat the start of the block as a parameter list if an '->' really follows it;
+        // otherwise `{ Log(it) }` would have its body swallowed as "parameters".
+        if (HasLambdaParameters())
         {
             while (Peek().Type is not TokenType.ArrowSymbol and not TokenType.Eof)
             {
@@ -1260,6 +1320,8 @@ public sealed class AstBuilder : SafeIterator<Token>
                 }
             
                 parameters.Add(new ParamNode(name, type, paramStart.To(Peek().Span)));
+                
+                if (Peek().Type is TokenType.Comma) Pop();
             }
             ExpectType(TokenType.ArrowSymbol, "Expected '->'");
         }
@@ -1267,7 +1329,11 @@ public sealed class AstBuilder : SafeIterator<Token>
         List<StatementNode> statements = [];
         while (Peek().Type is not TokenType.BracketClose and not TokenType.Eof)
         {
+            var before = Index;
             statements.Add(PopStatement());
+            
+            // Safety net: a statement that consumed nothing would repeat forever
+            if (Index == before) Pop();
         }
         ExpectType(TokenType.BracketClose, "Expected '}'");
         var block = new BlockExpressionNode(false, statements.ToValueList(), startSpan.To(Peek().Span));
@@ -1322,6 +1388,109 @@ public sealed class AstBuilder : SafeIterator<Token>
             or TokenType.Semicolon 
             or TokenType.Eof);
     }
+    
+    // `operator fun Add(...)` (or the lexer's own `op` keyword) — 'operator' is lexed as a plain
+    // identifier, so it only counts when it sits directly in front of 'fun'.
+    bool IsOperatorKeyword()
+    {
+        if (Peek().Type is TokenType.InstanceKind && Peek().Value == "op") return true;
+        return Peek().Value == "operator" && Peek(1).Type is TokenType.InstanceKind && Peek(1).Value == "fun";
+    }
+    
+    // ---- Generic argument helpers -----------------------------------------
+    bool IsCloseAngle() => Peek().Type is TokenType.GreaterThan or TokenType.RightShift;
+    
+    // Consumes one closing '>'. A '>>' token closes two nested lists at once (`Vector2<List<T>>`),
+    // so it is split: the first '>' is consumed here and a plain '>' is left in its place.
+    void ExpectCloseAngle()
+    {
+        var token = Peek();
+        if (token.Type is TokenType.RightShift)
+        {
+            var start = token.Span.Start;
+            var rest = new Token(TokenType.GreaterThan, ">", token.Span with { Start = new TextLocation(start.Line, start.Column + 1) });
+            Items[Index] = rest;
+            return;
+        }
+
+        ExpectType(TokenType.GreaterThan, "Expected '>'");
+    }
+    
+    // Looks ahead (consuming nothing) from a '<' for a complete generic argument list that is
+    // followed by '(' or '.' — that is what separates `Foo<T>(x)` / `Foo<T>.Bar` from `a < b`.
+    bool IsGenericArgumentList()
+    {
+        if (Peek().Type is not TokenType.LessThan) return false;
+
+        int depth = 0;
+        for (int offset = 0; ; offset++)
+        {
+            switch (Peek(offset).Type)
+            {
+                case TokenType.LessThan:
+                    depth++;
+                    break;
+                case TokenType.GreaterThan:
+                    depth--;
+                    break;
+                case TokenType.RightShift:
+                    depth -= 2;
+                    if (depth < 0) return false;
+                    break;
+                case TokenType.Identifier or TokenType.Dot or TokenType.Comma
+                    or TokenType.SquareOpen or TokenType.SquareClose or TokenType.Nullable or TokenType.RefKeyword:
+                    break;
+                default:
+                    return false;
+            }
+
+            if (depth < 0) return false;
+            if (depth == 0)
+            {
+                var next = Peek(offset + 1).Type;
+                return next is TokenType.ParenthesisOpen or TokenType.Dot;
+            }
+        }
+    }
+    ValueList<AeroType> PopTypeArguments()
+    {
+        ExpectType(TokenType.LessThan, "Expected '<'");
+
+        List<AeroType> arguments = [];
+        while (!IsCloseAngle() && Peek().Type is not TokenType.Eof)
+        {
+            var before = Index;
+            arguments.Add(PopType());
+            
+            if (Peek().Type is TokenType.Comma) Pop();
+            if (Index == before) Pop();
+        }
+        ExpectCloseAngle();
+
+        return arguments.ToValueList();
+    }
+    
+    // True if the tokens at the start of a lambda body look like `a, b: Int ->`
+    bool HasLambdaParameters()
+    {
+        if (Peek().Type is not TokenType.Identifier) return false;
+
+        for (int offset = 0; ; offset++)
+        {
+            switch (Peek(offset).Type)
+            {
+                case TokenType.ArrowSymbol:
+                    return true;
+                case TokenType.Identifier or TokenType.Colon or TokenType.Comma or TokenType.Dot
+                    or TokenType.LessThan or TokenType.GreaterThan or TokenType.RightShift
+                    or TokenType.SquareOpen or TokenType.SquareClose or TokenType.Nullable or TokenType.RefKeyword:
+                    continue;
+                default:
+                    return false;
+            }
+        }
+    }
+    
     Operator PopOperator()
     {
         var opToken = Peek();
@@ -1469,31 +1638,26 @@ public sealed class AstBuilder : SafeIterator<Token>
                 Pop();
                 generics = [];
             
-                while (Peek().Type is not TokenType.GreaterThan and not TokenType.Eof)
+                while (!IsCloseAngle() && Peek().Type is not TokenType.Eof)
                 {
-                    bool isParamRef = Peek().Type is TokenType.RefKeyword;
-                    if (isParamRef) Pop();
-
-                    var paramName = PopIdentifier();
-                
-                    bool isParamNullable = Peek().Type is TokenType.Nullable;
-                    if (isParamNullable) Pop();
-
-                    AeroType? constraint = null;
-                    if (Peek().Type is TokenType.Colon)
-                    {
-                        Pop();
-                        constraint = PopType();
-                    }
+                    var before = Index;
+                    
+                    // Each argument is a full type, so nested generics like `Vector2<T>` work. The AST
+                    // stores arguments as GenericParameterType, so anything that isn't a plain name is
+                    // kept by its printed form.
+                    var argument = PopType();
+                    generics.Add(argument is ScalarType s
+                        ? new GenericParameterType(s.Name, null, s.IsRef, s.IsNullable)
+                        : new GenericParameterType(argument.ToString()));
                 
                     if (Peek().Type is TokenType.Comma)
                     {
                         Pop();
                     }
-
-                    generics.Add(new GenericParameterType(paramName, constraint, isParamRef, isParamNullable));
+                    
+                    if (Index == before) Pop(); // PopType reports without consuming on a non-identifier
                 }
-                ExpectType(TokenType.GreaterThan, "Expected '>'");
+                ExpectCloseAngle();
             }
         
             bool isNullable = Peek().Type is TokenType.Nullable;
@@ -1575,7 +1739,12 @@ public sealed class AstBuilder : SafeIterator<Token>
             
             while (Peek().Type is not TokenType.Eof and not TokenType.Semicolon and not TokenType.BracketOpen)
             {
+                var before = Index;
                 results.Add(PopType());
+                
+                // PopType reports an error without consuming when it sees a non-identifier;
+                // skip that token so this loop always makes progress.
+                if (Index == before) Pop();
 
                 if (Peek().Type is TokenType.Comma) Pop();
             }
@@ -1590,7 +1759,7 @@ public sealed class AstBuilder : SafeIterator<Token>
         {
             Pop();
             
-            while (Peek().Type is not TokenType.GreaterThan and not TokenType.Eof)
+            while (!IsCloseAngle() && Peek().Type is not TokenType.Eof)
             {
                 var startSpan = Peek().Span;
 
@@ -1612,7 +1781,7 @@ public sealed class AstBuilder : SafeIterator<Token>
                 }
             }
 
-            ExpectType(TokenType.GreaterThan, "Expected '>'");
+            ExpectCloseAngle();
         }
 
         return generics.ToValueList();

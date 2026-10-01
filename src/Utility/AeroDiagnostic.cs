@@ -55,7 +55,8 @@ public sealed record AeroDiagnostic(
     {
         var where = Span.IsUnknown ? "" : $"{Span.FilePath}({Span.Start.Line},{Span.Start.Column}): ";
         var code = Code is null ? "" : $" {Code}";
-        return $"{where}{Severity.ToString().ToLowerInvariant()}{code}: {Message}";
+        var severity = Severity.ToString();
+        return $"{where}{char.ToUpperInvariant(severity[0]) + severity[1..].ToLowerInvariant()}{code}: {Message}";
     }
 }
 

@@ -55,10 +55,13 @@ public record ArrayLiteralExpressionNode
     SourceSpan Span
 ) : ExpressionNode(Span);
 
+// TypeArguments is only set for explicit generic uses like `CreatePair<String, Int>(...)` or
+// `Result<Int>.Success`; null for every plain identifier.
 public record IdentifierExpressionNode
 (
     string Name,
-    SourceSpan Span
+    SourceSpan Span,
+    ValueList<AeroType>? TypeArguments = null
 ) : ExpressionNode(Span);
 
 public record MemberAccessExpressionNode

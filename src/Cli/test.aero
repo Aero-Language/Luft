@@ -31,8 +31,8 @@ module AeroTests.ComplexTest {
     // Generic class with primary constructor and generics
     public class Container<T> {
         public Items: T[] {
-            get => self
-            set => self = value
+            get => it
+            set => it = value
         }
 
         public constructor Container(initial: T[]) {
@@ -57,7 +57,7 @@ module AeroTests.ComplexTest {
     // Extension function on generic type
     public extension fun Container<Int>.Sum() -> Int {
         var total: Int = 0
-        for (item in Items) {
+        for (item in self.Items) {
             total += item
         }
         return total
@@ -70,16 +70,12 @@ module AeroTests.ComplexTest {
     }
 
     // Class with property accessors
-    public class Person {
-        private var _age: Int = 0
+    public class Person(age: Int) {
+        private var _age: Int = age // You can also declare backing properties yourself instead of using the 'it' keyword in a property, but it is discouraged as it is unnecessary and makes the code less readable
 
         public Age: Int {
             get => _age
             set => _age = value
-        }
-
-        public constructor Person(age: Int) {
-            Age = age
         }
     }
 
@@ -100,8 +96,8 @@ module AeroTests.ComplexTest {
         }
     }
 
-    // Enum with associated values
-    public enum Result<T> {
+    // Enum (enums can't be generic)
+    public enum Result {
         Success,
         Failure,
         Pending
@@ -129,21 +125,21 @@ module AeroTests.ComplexTest {
         }
 
         public operator fun Add(other: Complex) -> Complex {
-            new Complex(Real + other.Real, Imaginary + other.Imaginary)
+            Complex(Real + other.Real, Imaginary + other.Imaginary)
         }
 
         public operator fun Multiply(scalar: Float) -> Complex {
-            new Complex(Real * scalar, Imaginary * scalar)
+            Complex(Real * scalar, Imaginary * scalar)
         }
     }
 
     // Pattern matching with complex types
-    public fun ProcessResult<T>(result: Result<T>) -> String {
+    public fun ProcessResult(result: Result) -> String {
         match (result) {
             Result.Success => "Success",
             Result.Failure => "Failed",
             Result.Pending => "In progress",
-            _ => "Unknown"
+            else => "Unknown"
         }
     }
 
@@ -163,13 +159,13 @@ module AeroTests.ComplexTest {
 
     // Nested generics and complex expressions
     public fun CreatePair<X, Y>(first: X, second: Y) -> Pair<X, Y> {
-        new Pair<X, Y>(first, second)
+        Pair<X, Y>(first, second)
     }
 
     // Range expressions
-    public fun SumRange(from: Int, to: Int) -> Int {
+    public fun SumRange(start: Int, end: Int) -> Int {
         var sum: Int = 0
-        for (i in from..to) {
+        for (i in start..end) {
             sum += i
         }
         return sum
@@ -193,10 +189,10 @@ module AeroTests.ComplexTest {
     // Main function exercising all features
     public fun main(args: String[]) -> Int {
         // Test generic struct
-        val vec: Vector2<Int> = new Vector2<Int>()
+        val vec: Vector2<Int> = Vector2<Int>()
 
         // Test generic class
-        val container: Container<Int> = new Container<Int>([1, 2, 3, 4, 5])
+        val container: Container<Int> = Container<Int>([1, 2, 3, 4, 5])
         val sum: Int = container.Sum()
 
         // Test extensions
@@ -204,19 +200,19 @@ module AeroTests.ComplexTest {
         val isOdd: Bool = 5.IsOdd()
 
         // Test operator overloading
-        val c1: Complex = new Complex(1.0, 2.0)
-        val c2: Complex = new Complex(3.0, 4.0)
+        val c1: Complex = Complex(1.0, 2.0)
+        val c2: Complex = Complex(3.0, 4.0)
         val c3: Complex = c1 + c2
 
         // Test pattern matching
-        val resultStatus: String = ProcessResult(Result<Int>.Success)
+        val resultStatus: String = ProcessResult(Result.Success)
 
         // Test class hierarchy and virtual methods
-        val dog: Dog = new Dog()
+        val dog: Dog = Dog()
         val sound: String = dog.Speak()
 
         // Test person with property accessors
-        val person: Person = new Person(25)
+        val person: Person = Person(25)
         person.Age = 30
         val formatted: String = FormatPerson(person)
 
@@ -232,7 +228,7 @@ module AeroTests.ComplexTest {
 
         // Test filter with lambda
         val nums: Int[] = [1, 2, 3, 4, 5]
-        val filtered: Int[] = Filter(nums) { n: Int => n > 2 }
+        val filtered: Int[] = Filter(nums) { n: Int -> n > 2 }
 
         // Test countdown loop
         val countdown: Int = Countdown(5)

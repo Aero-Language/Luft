@@ -66,7 +66,7 @@ public static class LuftCli
 
         PrintDiagnostics(diagnostics);
     }
-
+    
     static void PrintDiagnostics(DiagnosticBag diagnostics)
     {
         foreach (var diagnostic in diagnostics.Ordered())

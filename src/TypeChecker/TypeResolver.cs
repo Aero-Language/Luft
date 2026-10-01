@@ -65,7 +65,7 @@ public sealed class TypeResolver : AeroThrower
         {
             var generics = function.GenericParameters.Select(g => g.Name).ToHashSet();
             
-            foreach (var generic in function.GenericParameters) CheckType(generic, scope, function.Declaration.Span);
+            foreach (var generic in function.GenericParameters) CheckType(generic, scope, function.Declaration.Span, generics);
             CheckType(function.ReturnType, scope, function.Declaration.Span, generics);
             foreach (var param in function.Parameters) CheckType(param.Type, scope, function.Declaration.Span, generics);
         }
@@ -79,7 +79,7 @@ public sealed class TypeResolver : AeroThrower
         {
             var generics = function.GenericParameters.Select(g => g.Name).ToHashSet();
             
-            foreach (var generic in function.GenericParameters) CheckType(generic, scope, function.Declaration.Span);
+            foreach (var generic in function.GenericParameters) CheckType(generic, scope, function.Declaration.Span, generics);
             CheckType(function.ReturnType, scope, function.Declaration.Span, generics);
             foreach (var param in function.Parameters) CheckType(param.Type, scope, function.Declaration.Span, generics);
         }
@@ -229,7 +229,7 @@ public sealed class TypeResolver : AeroThrower
                     // Try to get the type from the parent scope
                     if (scope.ContainingScope != null)
                     {
-                        return CheckType(type, scope.ContainingScope, location, original: original);
+                        return CheckType(type, scope.ContainingScope, location, memberGenerics, original);
                     }
                     
                     // There is no parent scope, so try to get it from the file imports
@@ -254,10 +254,10 @@ public sealed class TypeResolver : AeroThrower
                 
                 if (!symbols.Select(t => t.Signature).Contains(original?.Signature ?? type.Signature)) Error("The type exists but there is no matching signature", location);
                 return symbols.FirstOrDefault(ts => ts.Signature.Equals(original?.Signature ?? type.Signature));
-            case ArrayType a: return CheckType(a.ElementType, scope, location);
-            case GenericType g: foreach (var gp in g.TypeArguments) CheckType(gp, scope, location); return CheckType(g.Definition, scope, location, original: g);
-            case GenericParameterType gp: CheckType(gp.Constraint, scope, location); return null;
-            case LambdaType l: CheckType(l.ReturnType, scope, location); foreach (var p in l.Parameters) CheckType(p.Type, scope, location); return null;
+            case ArrayType a: return CheckType(a.ElementType, scope, location, memberGenerics);
+            case GenericType g: foreach (var gp in g.TypeArguments) CheckType(gp, scope, location, memberGenerics); return CheckType(g.Definition, scope, location, memberGenerics, g);
+            case GenericParameterType gp: CheckType(gp.Constraint, scope, location, memberGenerics); return null;
+            case LambdaType l: CheckType(l.ReturnType, scope, location, memberGenerics); foreach (var p in l.Parameters) CheckType(p.Type, scope, location, memberGenerics); return null;
             default: return null;
         }
     }

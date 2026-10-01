@@ -6,6 +6,38 @@
         <ImplicitUsings>enable</ImplicitUsings>
         <Nullable>enable</Nullable>
         <RootNamespace>Luft.Lsp</RootNamespace>
+        <OutputType>Exe</OutputType>
+
+        <RuntimeIdentifiers>win-x64;linux-x64;osx-x64;osx-arm64</RuntimeIdentifiers>
     </PropertyGroup>
+
+    <PropertyGroup>
+        <PublishTrimmed>true</PublishTrimmed>
+        <TrimMode>partial</TrimMode>
+        
+        <EnableCompressionInSingleFile>true</EnableCompressionInSingleFile>
+        
+        <DebuggerSupport>false</DebuggerSupport>
+        <DebugSymbols>false</DebugSymbols>
+        <DebugType>none</DebugType>
+        
+        <EnableUnsafeBinaryFormatterSerialization>false</EnableUnsafeBinaryFormatterSerialization>
+        <EventSourceSupport>false</EventSourceSupport>
+        <HttpActivityPropagationSupport>false</HttpActivityPropagationSupport>
+        <MetadataUpdaterSupport>false</MetadataUpdaterSupport>
+        <UseSystemResourceKeys>true</UseSystemResourceKeys>
+        
+        <InvariantGlobalization>true</InvariantGlobalization>
+    </PropertyGroup>
+    
+    <ItemGroup>
+      <PackageReference Include="OmniSharp.Extensions.LanguageServer" Version="0.19.9" />
+    </ItemGroup>
+
+    <ItemGroup>
+      <ProjectReference Include="..\Ast\Ast.csproj" />
+      <ProjectReference Include="..\Lexer\Lexer.csproj" />
+      <ProjectReference Include="..\TypeChecker\TypeChecker.csproj" />
+    </ItemGroup>
 
 </Project>

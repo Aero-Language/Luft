@@ -1,8 +1,8 @@
 module AeroTests.ComplexTest {
 
     // Generic trait with multiple methods
-    public trait IComparable<T> {
-        fun CompareTo(other: T) -> Int
+    public trait IComparable<T, TReturn> {
+        fun CompareTo(other: T) -> TReturn
         fun Equals(other: T) -> Bool
     }
 
@@ -11,12 +11,12 @@ module AeroTests.ComplexTest {
     }
 
     // Generic struct implementing multiple traits
-    public struct Vector2<T> : IComparable<Vector2<T>>, IPrintable {
+    public struct Vector2<T> : IComparable<Vector2<T>, Int>, IPrintable {
         var X: T
         var Y: T
 
         public impl fun CompareTo(other: Vector2<T>) -> Int {
-            0 // Placeholder - would need proper comparison logic
+            0
         }
 
         public impl fun Equals(other: Vector2<T>) -> Bool {
@@ -25,6 +25,16 @@ module AeroTests.ComplexTest {
 
         public impl fun ToString() -> String {
             "Vector"
+        }
+    }
+
+    public struct IntVec2 : Vector2<Int> {
+        public impl fun CompareTo(other: IntVec2) -> Int {
+            
+        }
+        
+        public impl fun Equals(other: IntVec2) -> Bool {
+            self.X == other.X && self.Y == other.Y
         }
     }
 

@@ -16,11 +16,11 @@ public sealed class Tokenizer : SafeIterator<char>
     {
         PopTask = amount =>
         {
-            var skipped = Items[Index..(Index + amount)];
-
-            foreach (var c in skipped)
+            // Clamp so popping past the end (e.g. a trailing '$') can't throw
+            var end = Math.Min(Index + amount, Items.Length);
+            for (int i = Index; i < end; i++)
             {
-                switch (c)
+                switch (Items[i])
                 {
                     case '\n': Line++; Column = 1; break;
                     case '\r': Column = 1; break;
@@ -35,8 +35,16 @@ public sealed class Tokenizer : SafeIterator<char>
         if (!File.Exists(filePath))
             throw new FileNotFoundException("File not found", filePath);
 
+        return TokenizeSource(File.ReadAllText(filePath), filePath);
+    }
+
+    // Lexes in-memory text (editor buffers); filePath only labels the spans
+    public Token[] TokenizeSource(string text, string filePath)
+    {
         FilePath = filePath;
-        var source = File.ReadAllText(filePath).ToArray();
+        Line = 1;
+        Column = 1;
+        var source = text.ToCharArray();
         Start(source);
         
         Tokens = new List<Token>(source.Length / 5);
@@ -49,8 +57,9 @@ public sealed class Tokenizer : SafeIterator<char>
             LexPass(c);
         }
 
-        var fileSpan = new SourceSpan(filePath, TextLocation.Zero, new TextLocation(source.Count('\n') + 1, source.Length - source.LastIndexOf('\n') - 1));
-        Tokens.Add(new Token(TokenType.Eof, "", fileSpan));
+        // Zero-width span at the end so "unexpected end of file" errors don't underline the whole file
+        var endLoc = new TextLocation(Line, Column);
+        Tokens.Add(new Token(TokenType.Eof, "", new SourceSpan(filePath, endLoc, endLoc)));
         return Tokens.ToArray();
     }
     
@@ -123,7 +132,7 @@ public sealed class Tokenizer : SafeIterator<char>
         if (Index + text.Length > Items.Length)
             return false;
 
-        return Items.SequenceEqual(text);
+        return Items.AsSpan(Index, text.Length).SequenceEqual(text.AsSpan());
     }
     void PopWhitespace()
     {

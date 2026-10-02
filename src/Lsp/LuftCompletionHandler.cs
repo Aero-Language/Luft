@@ -4,36 +4,50 @@ using OmniSharp.Extensions.LanguageServer.Protocol.Models;
 
 namespace Luft.Lsp;
 
-public class LuftCompletionHandler : CompletionHandlerBase
+public class LuftCompletionHandler(LuftCompilerService compiler) : CompletionHandlerBase
 {
     public override Task<CompletionList> Handle(CompletionParams request, CancellationToken cancellationToken)
     {
-        var items = new List<CompletionItem>
+        try
         {
-            new CompletionItem
-            {
-                Label = "fn",
-                Kind = CompletionItemKind.Keyword,
-                Detail = "Function declaration",
-                InsertText = "fn ${1:name}() -> ${2:Void} {\n\t$0\n}"
-            },
-            new CompletionItem
-            {
-                Label = "struct",
-                Kind = CompletionItemKind.Keyword,
-                Detail = "Struct type declaration"
-            }
-        };
+            var path = LuftCompilerService.PathOf(request.TextDocument.Uri);
+            var items = new Analyzer(compiler.Current)
+                .Complete(path, LspUtil.ToLocation(request.Position))
+                .Select(s => new CompletionItem
+                {
+                    Label = s.Label,
+                    Kind = KindOf(s.Kind),
+                    Detail = s.Detail
+                })
+                .ToList();
 
-        return Task.FromResult(new CompletionList(items));
+            return Task.FromResult(new CompletionList(items));
+        }
+        catch (Exception)
+        {
+            return Task.FromResult(new CompletionList());
+        }
     }
 
-    public override Task<CompletionItem> Handle(CompletionItem request, CancellationToken cancellationToken)
+    public override Task<CompletionItem> Handle(CompletionItem request, CancellationToken cancellationToken) => Task.FromResult(request);
+
+    static CompletionItemKind KindOf(string kind) => kind switch
     {
-        return  Task.FromResult(request);
-    }
+        "keyword" => CompletionItemKind.Keyword,
+        "class" or "annotation" or "type" => CompletionItemKind.Class,
+        "struct" or "record" => CompletionItemKind.Struct,
+        "trait" => CompletionItemKind.Interface,
+        "enum" or "enum class" => CompletionItemKind.Enum,
+        "enum member" => CompletionItemKind.EnumMember,
+        "function" => CompletionItemKind.Function,
+        "method" or "extension fun" => CompletionItemKind.Method,
+        "property" => CompletionItemKind.Property,
+        "field" => CompletionItemKind.Field,
+        "constant" or "const" => CompletionItemKind.Constant,
+        _ => CompletionItemKind.Variable
+    };
 
-    protected override CompletionRegistrationOptions CreateRegistrationOptions( CompletionCapability capability, ClientCapabilities clientCapabilities)
+    protected override CompletionRegistrationOptions CreateRegistrationOptions(CompletionCapability capability, ClientCapabilities clientCapabilities)
         => new()
         {
             DocumentSelector = TextDocumentSelector.ForLanguage("aero"),

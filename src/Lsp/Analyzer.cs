@@ -107,16 +107,66 @@ public sealed class Analyzer(Snapshot snap)
         if (ctx.Generics.Contains(name)) return new Hit("type parameter", name, $"type parameter {name}", null, tok.Span);
 
         var local = ctx.Locals.LastOrDefault(l => l.Name == name);
-        if (local is not null) return new Hit(local.Kind, name, LocalDetail(local, ctx), local.Span, tok.Span);
+        var typeDecl = Index.TypeDecls.GetValueOrDefault(name);
 
-        var decls = Index.Named(name).ToList();
-        var found = decls.FirstOrDefault(d => d.Container is not null && ctx.Types.Contains(d.Container))
-                    ?? decls.FirstOrDefault(d => d.Container is null)
-                    ?? decls.FirstOrDefault();
-        if (found is not null) return FromDecl(found, tok.Span);
+        var values = Index.Named(name).Where(d => !IsTypeKind(d.Kind)).ToList();
+        var valueDecl = values.FirstOrDefault(d => d.Container is not null && ctx.Types.Contains(d.Container))
+                        ?? values.FirstOrDefault(d => d.Container is null)
+                        ?? values.FirstOrDefault();
+
+        // A type and a variable can share a name (`val Result: Result`), the tokens around the name decide which one is meant
+        if (typeDecl is not null && (local is null && valueDecl is null || PrefersType(sig, i, local, valueDecl)))
+            return FromDecl(typeDecl, tok.Span);
+        if (local is not null) return new Hit(local.Kind, name, LocalDetail(local, ctx), local.Span, tok.Span);
+        if (valueDecl is not null) return FromDecl(valueDecl, tok.Span);
 
         if (TypeTable.PrimitiveTypes.Any(p => p.Name == name)) return new Hit("builtin", name, $"builtin type {name}", null, tok.Span);
         return null;
+    }
+
+    static bool IsTypeKind(string kind)
+        => kind is "class" or "struct" or "record" or "trait" or "enum" or "enum class" or "annotation" or "type";
+
+    // True if the identifier at sig[i] reads as the type rather than the same-named variable
+    bool PrefersType(List<Token> sig, int i, LocalVar? local, Decl? value)
+    {
+        var name = sig[i].Value;
+
+        if (i > 0)
+        {
+            var prev = sig[i - 1];
+            // Right after `val`/`var`/`const`/`fun` a variable or function is being declared, after `class` and friends a type
+            if (prev.Type is TokenType.VariableKind) return false;
+            if (prev.Type is TokenType.InstanceKind)
+                return prev.Value is "class" or "struct" or "record" or "trait" or "enum" or "annotation" || TakesType(sig, i - 1);
+            if (TakesType(sig, i - 1)) return true;
+        }
+
+        var next = i + 1 < sig.Count ? sig[i + 1] : null;
+
+        // `Name.member`: types only have static members, instances only instance ones
+        if (next?.Type is TokenType.Dot && i + 2 < sig.Count && sig[i + 2].Type is TokenType.Identifier)
+        {
+            var member = sig[i + 2].Value;
+            var valueType = local is not null ? SymbolIndex.TypeName(local.Type) : SymbolIndex.TypeName(value?.Type);
+
+            var typeHas = Index.MembersOf(name).Any(d => d.Name == member && d.IsStatic);
+            var valueHas = valueType is not null && Index.MembersOf(valueType).Any(d => d.Name == member && !d.IsStatic);
+
+            if (typeHas && !valueHas) return true;
+            if (valueHas) return false;
+        }
+
+        // `Name(...)` constructs a type unless the name is a function or a lambda variable
+        if (next?.Type is TokenType.ParenthesisOpen)
+        {
+            if (local?.Type is LambdaType) return false;
+            return value is null || value.Kind is not ("function" or "method");
+        }
+
+        if (next?.Type is TokenType.LessThan && Index.TypeDecls.TryGetValue(name, out var td) && td.Detail.Contains('<')) return true;
+
+        return false;
     }
 
     // Semantic highlighting: every identifier that resolves to a type or a variable
@@ -368,12 +418,29 @@ public sealed class Analyzer(Snapshot snap)
         var owner = TypeNameAt(sig, recv, ctx, 0);
         if (owner is null) return result;
 
-        var isStaticRef = recv >= 0 && sig[recv].Type is TokenType.Identifier
-                          && !ctx.Locals.Any(l => l.Name == sig[recv].Value)
-                          && Index.TypeNames.Contains(sig[recv].Value);
+        var recvName = recv >= 0 && sig[recv].Type is TokenType.Identifier ? sig[recv].Value : null;
+        var isTypeRef = recvName is not null
+                        && !ctx.Locals.Any(l => l.Name == recvName)
+                        && Index.TypeNames.Contains(recvName);
 
-        foreach (var d in Index.MembersOf(owner))
-            if (isStaticRef ? d.IsStatic : !d.IsStatic) result.Add(new Suggestion(d.Name, d.Kind, d.Detail, 1));
+        if (isTypeRef)
+        {
+            foreach (var d in Index.MembersOf(owner))
+                if (d.IsStatic) result.Add(new Suggestion(d.Name, d.Kind, d.Detail, 1));
+
+            // A field or property with the same name as the type also offers its instance members
+            var shadow = Index.Named(recvName!).FirstOrDefault(d => !IsTypeKind(d.Kind) && (d.Container is null || ctx.Types.Contains(d.Container)));
+            var shadowType = SymbolIndex.TypeName(shadow?.Type);
+            if (shadowType is not null)
+                foreach (var d in Index.MembersOf(shadowType))
+                    if (!d.IsStatic) result.Add(new Suggestion(d.Name, d.Kind, d.Detail, 1));
+        }
+        else
+        {
+            foreach (var d in Index.MembersOf(owner))
+                if (!d.IsStatic) result.Add(new Suggestion(d.Name, d.Kind, d.Detail, 1));
+        }
+
         return result.DistinctBy(s => (s.Label, s.Detail)).ToList();
     }
 

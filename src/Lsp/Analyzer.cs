@@ -7,20 +7,45 @@ namespace Luft.Lsp;
 
 public sealed record Hit(string Kind, string Name, string Detail, SourceSpan? Decl, SourceSpan Ref);
 
-public sealed record Suggestion(string Label, string Kind, string Detail);
+// Rank orders the list: lower comes first
+public sealed record Suggestion(string Label, string Kind, string Detail, int Rank = 3);
+
+public sealed record SemanticTok(SourceSpan Span, string Type);
 
 // Name based symbol lookup over the last good type table and the current syntax tree
 public sealed class Analyzer(Snapshot snap)
 {
-    sealed record Ctx(List<LocalVar> Locals, List<string> Types);
+    sealed record Ctx(List<LocalVar> Locals, List<string> Types, List<string> Generics);
 
-    static readonly string[] Keywords =
+    enum Place { Top, TypeBody, Statement, Property, Enum }
+
+    static readonly HashSet<string> AccessMods = ["public", "internal", "protected", "private"];
+    static readonly HashSet<string> MemberMods = ["static", "weak", "partial", "unsafe"];
+    static readonly HashSet<string> InheritMods = ["virtual", "abstract", "sealed", "impl"];
+
+    static readonly string[] DeclKeywords =
     [
-        "val", "var", "const", "public", "internal", "protected", "private", "static", "weak", "partial", "unsafe",
-        "virtual", "abstract", "sealed", "impl", "struct", "record", "class", "fun", "enum", "trait", "extension",
-        "extensions", "annotation", "constructor", "destructor", "op", "if", "else", "match", "case", "while", "for",
-        "in", "break", "continue", "module", "import", "from", "return", "yield", "ref", "concurrent", "spawn",
-        "get", "set", "init", "is", "not", "and", "or", "true", "false", "null", "self", "it"
+        "val", "var", "const", "fun", "op", "struct", "record", "class", "enum", "trait",
+        "extension", "extensions", "annotation", "constructor", "destructor"
+    ];
+
+    static readonly string[] StatementKeywords =
+    [
+        "val", "var", "const", "if", "match", "while", "for", "break", "continue", "return", "yield",
+        "concurrent", "spawn", "self", "it", "true", "false", "null"
+    ];
+
+    static readonly string[] ExprKeywords = ["self", "it", "true", "false", "null", "if", "match", "spawn", "concurrent"];
+
+    static readonly HashSet<TokenType> ExprPrev =
+    [
+        TokenType.Assign, TokenType.AddAssign, TokenType.SubtractAssign, TokenType.MultiplyAssign, TokenType.DivideAssign,
+        TokenType.ModuloAssign, TokenType.Equality, TokenType.Inequality, TokenType.LessThan, TokenType.GreaterThan,
+        TokenType.LessThanEqual, TokenType.GreaterThanEqual, TokenType.Add, TokenType.Subtract, TokenType.Multiply,
+        TokenType.Divide, TokenType.Modulo, TokenType.LogicalAnd, TokenType.LogicalOr, TokenType.And, TokenType.Or,
+        TokenType.LogicalNot, TokenType.Not, TokenType.BitwiseAnd, TokenType.BitwiseOr, TokenType.BitwiseXor,
+        TokenType.ParenthesisOpen, TokenType.Comma, TokenType.SquareOpen, TokenType.ReturnKeyword, TokenType.YieldKeyword,
+        TokenType.EqualArrow, TokenType.RangeSymbol, TokenType.CastSymbol, TokenType.InKeyword
     ];
 
     SymbolIndex Index => snap.Index;
@@ -29,10 +54,21 @@ public sealed class Analyzer(Snapshot snap)
         .Where(t => t.Type is not (TokenType.Whitespace or TokenType.Comment or TokenType.Unknown or TokenType.Eof))
         .ToList();
 
+    static IEnumerable<string> GenericsOf(AstNode n) => n switch
+    {
+        ClassDeclarationNode c => c.GenericParameters.Select(g => g.Name),
+        StructDeclarationNode s => s.GenericParameters.Select(g => g.Name),
+        RecordDeclarationNode r => r.GenericParameters.Select(g => g.Name),
+        TraitDeclarationNode t => t.GenericParameters.Select(g => g.Name),
+        AnnotationDeclarationNode a => a.GenericParameters.Select(g => g.Name),
+        FunctionDeclarationNode f => f.GenericParameters.Select(g => g.Name),
+        _ => Enumerable.Empty<string>()
+    };
+
     Ctx ContextAt(ParsedFile file, TextLocation pos)
     {
         var chain = AstNav.ChainAt(file.Ast, pos);
-        return new Ctx(AstNav.LocalsAt(chain, pos), AstNav.TypeNamesOf(chain));
+        return new Ctx(AstNav.LocalsAt(chain, pos), AstNav.TypeNamesOf(chain), chain.SelectMany(GenericsOf).ToList());
     }
 
     public Hit? Resolve(string path, TextLocation pos)
@@ -41,11 +77,16 @@ public sealed class Analyzer(Snapshot snap)
 
         var sig = Significant(file);
         var i = sig.FindIndex(t => t.Span.Contains(pos));
-        if (i < 0 || sig[i].Type is not (TokenType.Identifier or TokenType.SelfLiteral)) return null;
+        return i < 0 ? null : ResolveAt(file, sig, i);
+    }
 
+    Hit? ResolveAt(ParsedFile file, List<Token> sig, int i)
+    {
         var tok = sig[i];
+        if (tok.Type is not (TokenType.Identifier or TokenType.SelfLiteral)) return null;
+
         var name = tok.Value;
-        var ctx = ContextAt(file, pos);
+        var ctx = ContextAt(file, tok.Span.Start);
 
         if (tok.Type is TokenType.SelfLiteral)
         {
@@ -63,6 +104,8 @@ public sealed class Analyzer(Snapshot snap)
             return member is null ? null : FromDecl(member, tok.Span);
         }
 
+        if (ctx.Generics.Contains(name)) return new Hit("type parameter", name, $"type parameter {name}", null, tok.Span);
+
         var local = ctx.Locals.LastOrDefault(l => l.Name == name);
         if (local is not null) return new Hit(local.Kind, name, LocalDetail(local, ctx), local.Span, tok.Span);
 
@@ -72,9 +115,45 @@ public sealed class Analyzer(Snapshot snap)
                     ?? decls.FirstOrDefault();
         if (found is not null) return FromDecl(found, tok.Span);
 
-        if (TypeTable.PrimitiveTypes.Any(p => p.Name == name)) return new Hit("type", name, $"builtin type {name}", null, tok.Span);
+        if (TypeTable.PrimitiveTypes.Any(p => p.Name == name)) return new Hit("builtin", name, $"builtin type {name}", null, tok.Span);
         return null;
     }
+
+    // Semantic highlighting: every identifier that resolves to a type or a variable
+    public List<SemanticTok> Classify(string path)
+    {
+        var result = new List<SemanticTok>();
+        if (!snap.Files.TryGetValue(path, out var file)) return result;
+
+        var sig = Significant(file);
+        for (int i = 0; i < sig.Count; i++)
+        {
+            if (sig[i].Type is not TokenType.Identifier) continue;
+
+            var hit = ResolveAt(file, sig, i);
+            var type = hit is null ? null : SemanticType(hit.Kind);
+            if (type is not null) result.Add(new SemanticTok(sig[i].Span, type));
+        }
+
+        return result;
+    }
+
+    static string? SemanticType(string kind) => kind switch
+    {
+        "class" or "annotation" or "type" => "class",
+        "struct" => "struct",
+        "record" => "record",
+        "trait" => "interface",
+        "enum" or "enum class" => "enum",
+        "enum member" => "enumMember",
+        "type parameter" => "typeParameter",
+        "property" => "property",
+        "field" => "field",
+        "constant" or "const" => "constant",
+        "parameter" => "parameter",
+        "val" or "var" => "variable",
+        _ => null
+    };
 
     // Narrows a declaration span (which starts at the keyword) down to the name token
     public SourceSpan NameSpan(SourceSpan decl, string name)
@@ -85,43 +164,217 @@ public sealed class Analyzer(Snapshot snap)
         return tok?.Span ?? decl;
     }
 
+    static bool IsWord(Token t)
+        => t.Type is not (TokenType.StringLiteral or TokenType.CharLiteral or TokenType.IntLiteral or TokenType.FloatLiteral
+               or TokenType.InterpolationStart or TokenType.InterpolationEnd)
+           && t.Value.Length > 0 && (char.IsLetter(t.Value[0]) || t.Value[0] == '_');
+
     public List<Suggestion> Complete(string path, TextLocation pos)
     {
         var result = new List<Suggestion>();
         if (!snap.Files.TryGetValue(path, out var file)) return result;
 
         var sig = Significant(file);
-        var prefix = sig.FindIndex(t => t.Type is TokenType.Identifier && t.Span.Start < pos && pos <= t.Span.End);
-        var before = prefix >= 0 ? prefix - 1 : sig.FindLastIndex(t => t.Span.End <= pos);
+        if (sig.Any(t => t.Type is TokenType.StringLiteral or TokenType.CharLiteral && t.Span.Start < pos && pos < t.Span.End)) return result;
+
+        // The word being typed is not context, so everything is judged from the token before it
+        var prefix = sig.FindIndex(t => t.Span.Start < pos && pos <= t.Span.End && IsWord(t));
+        var limit = prefix >= 0 ? prefix : sig.FindIndex(t => t.Span.Start >= pos);
+        if (limit < 0) limit = sig.Count;
+
+        var before = limit - 1;
+        var prev = before >= 0 ? sig[before] : null;
         var ctx = ContextAt(file, pos);
 
-        if (before >= 0 && sig[before].Type is TokenType.Dot)
+        if (prev?.Type is TokenType.Dot) return Members(sig, before - 1, ctx);
+
+        if (prev is not null)
         {
-            var recv = before - 1;
-            var owner = TypeNameAt(sig, recv, ctx, 0);
-            if (owner is null) return result;
-
-            var isStaticRef = recv >= 0 && sig[recv].Type is TokenType.Identifier
-                              && !ctx.Locals.Any(l => l.Name == sig[recv].Value)
-                              && Index.TypeNames.Contains(sig[recv].Value);
-
-            foreach (var d in Index.MembersOf(owner))
-                if (isStaticRef ? d.IsStatic : !d.IsStatic) result.Add(new Suggestion(d.Name, d.Kind, d.Detail));
-            return result.DistinctBy(s => (s.Label, s.Detail)).ToList();
+            if (IntroducesName(sig, before)) return result; // a new name is being typed
+            if (TakesType(sig, before)) return TypeSuggestions(ctx);
+            if (prev.Type is TokenType.ImportKeyword or TokenType.FromKeyword) return ImportSuggestions(sig, before);
+            if (prev.Type is TokenType.InstanceKind && prev.Value == "extension")
+                return [new Suggestion("fun", "keyword", "", 5), new Suggestion("op", "keyword", "", 5)];
         }
 
-        foreach (var k in Keywords) result.Add(new Suggestion(k, "keyword", ""));
-        foreach (var p in TypeTable.PrimitiveTypes) result.Add(new Suggestion(p.Name, "type", "builtin type"));
-        foreach (var l in ctx.Locals) result.Add(new Suggestion(l.Name, l.Kind, LocalDetail(l, ctx)));
+        var place = PlaceAt(sig, limit);
+        if (place is Place.Enum) return result;
 
-        foreach (var d in Index.All.Where(d => d.Container is null))
-            result.Add(new Suggestion(d.Name, d.Kind, d.Detail));
+        var mods = ModifierRun(sig, before);
+        var exprContext = prev is not null && mods.Count == 0 && ExprPrev.Contains(prev.Type);
 
+        if (mods.Count > 0 || (!exprContext && place is Place.Top or Place.TypeBody or Place.Property))
+        {
+            foreach (var k in DeclarationKeywords(place, mods)) result.Add(new Suggestion(k, "keyword", "", 5));
+            return result;
+        }
+
+        var keywords = exprContext ? ExprKeywords : StatementKeywords;
+        foreach (var k in keywords) result.Add(new Suggestion(k, "keyword", "", 5));
+        if (!exprContext && prev?.Type is TokenType.BracketClose) result.Add(new Suggestion("else", "keyword", "", 5));
+
+        foreach (var l in ctx.Locals) result.Add(new Suggestion(l.Name, l.Kind, LocalDetail(l, ctx), 0));
         foreach (var type in ctx.Types)
             foreach (var d in Index.MembersOf(type))
-                result.Add(new Suggestion(d.Name, d.Kind, d.Detail));
+                result.Add(new Suggestion(d.Name, d.Kind, d.Detail, 1));
+        foreach (var d in Index.All.Where(d => d.Container is null))
+            result.Add(new Suggestion(d.Name, d.Kind, d.Detail, 2));
+        foreach (var p in TypeTable.PrimitiveTypes) result.Add(new Suggestion(p.Name, "type", "builtin type", 3));
 
         return result.DistinctBy(s => (s.Label, s.Kind, s.Detail)).ToList();
+    }
+
+    static List<string> DeclarationKeywords(Place place, List<string> mods)
+    {
+        var list = new List<string>();
+        var hasAccess = mods.Any(m => AccessMods.Contains(m));
+
+        if (place is Place.Property)
+        {
+            list.AddRange(["get", "set", "init"]);
+            if (!hasAccess) list.AddRange(AccessMods);
+            return list;
+        }
+
+        if (!hasAccess) list.AddRange(AccessMods);
+        list.AddRange(MemberMods.Where(m => !mods.Contains(m)));
+        if (!mods.Any(m => InheritMods.Contains(m))) list.AddRange(InheritMods);
+        list.AddRange(DeclKeywords);
+        if (place is Place.Top && mods.Count == 0) list.AddRange(["import", "from", "module"]);
+        return list;
+    }
+
+    // Modifiers directly in front of the cursor, e.g. `public static |`
+    static List<string> ModifierRun(List<Token> sig, int from)
+    {
+        var mods = new List<string>();
+        for (var k = from; k >= 0 && sig[k].Type is TokenType.AccessModifierKind or TokenType.MemberModifierKind or TokenType.InheritanceModifierKind; k--)
+            mods.Add(sig[k].Value);
+        return mods;
+    }
+
+    static bool IsExtensionKeyword(Token t) => t.Type is TokenType.InstanceKind && t.Value == "extension";
+
+    static bool IntroducesName(List<Token> sig, int i)
+    {
+        var t = sig[i];
+        if (t.Type is TokenType.VariableKind) return true;
+        if (t.Type is not TokenType.InstanceKind) return false;
+        if (t.Value == "fun") return !(i > 0 && IsExtensionKeyword(sig[i - 1]));
+        return t.Value is "class" or "struct" or "record" or "trait" or "enum" or "annotation";
+    }
+
+    static bool TakesType(List<Token> sig, int i)
+    {
+        var t = sig[i];
+        switch (t.Type)
+        {
+            case TokenType.Colon or TokenType.ArrowSymbol or TokenType.Is or TokenType.RefKeyword:
+                return true;
+            case TokenType.Not:
+                return i > 0 && sig[i - 1].Type is TokenType.Is;
+            case TokenType.InstanceKind:
+                return t.Value is "extensions" or "constructor" or "destructor"
+                       || (t.Value == "fun" && i > 0 && IsExtensionKeyword(sig[i - 1]));
+            default:
+                return false;
+        }
+    }
+
+    List<Suggestion> TypeSuggestions(Ctx ctx)
+    {
+        var r = new List<Suggestion>();
+        foreach (var g in ctx.Generics.Distinct()) r.Add(new Suggestion(g, "type parameter", $"type parameter {g}", 0));
+        foreach (var d in Index.TypeDecls.Values) r.Add(new Suggestion(d.Name, d.Kind, d.Detail, 1));
+        foreach (var p in TypeTable.PrimitiveTypes) r.Add(new Suggestion(p.Name, "type", "builtin type", 2));
+        return r;
+    }
+
+    List<Suggestion> ImportSuggestions(List<Token> sig, int i)
+    {
+        var line = sig[i].Span.Start.Line;
+        var isFromImport = false;
+        for (var k = i - 1; k >= 0 && sig[k].Span.Start.Line == line; k--)
+            if (sig[k].Type is TokenType.FromKeyword) isFromImport = true;
+
+        if (sig[i].Type is TokenType.ImportKeyword && isFromImport)
+            return Index.All.Where(d => d.Container is null)
+                .Select(d => new Suggestion(d.Name, d.Kind, d.Detail, 1))
+                .DistinctBy(s => s.Label).ToList();
+
+        return snap.Table.Modules.Keys.Where(k => k.Length > 0)
+            .Select(k => new Suggestion(k, "module", "module", 1)).ToList();
+    }
+
+    // Walks the braces before the cursor to learn what kind of body it is in
+    Place PlaceAt(List<Token> sig, int limit)
+    {
+        var stack = new List<Place>();
+        for (int i = 0; i < limit; i++)
+        {
+            if (sig[i].Type is TokenType.BracketOpen) stack.Add(BodyKind(sig, i, stack.Count == 0 ? Place.Top : stack[^1]));
+            else if (sig[i].Type is TokenType.BracketClose && stack.Count > 0) stack.RemoveAt(stack.Count - 1);
+        }
+
+        return stack.Count == 0 ? Place.Top : stack[^1];
+    }
+
+    static Place BodyKind(List<Token> sig, int open, Place parent)
+    {
+        if (open == 0) return Place.Statement;
+
+        // Collect the header in front of the brace; it ends at the previous brace or semicolon
+        var header = new List<Token>();
+        int depth = 0, line = sig[open - 1].Span.Start.Line;
+        for (var k = open - 1; k >= 0; k--)
+        {
+            var t = sig[k];
+            if (t.Type is TokenType.BracketOpen or TokenType.BracketClose or TokenType.Semicolon) break;
+            if (t.Span.Start.Line != line && depth <= 0) break;
+
+            if (t.Type is TokenType.ParenthesisClose) depth++;
+            else if (t.Type is TokenType.ParenthesisOpen) depth--;
+
+            line = t.Span.Start.Line;
+            header.Add(t);
+        }
+        header.Reverse();
+
+        foreach (var t in header.AsEnumerable().Reverse())
+        {
+            if (t.Type is TokenType.ModuleKeyword) return Place.Top;
+            if (t.Type is not TokenType.InstanceKind) continue;
+
+            return t.Value switch
+            {
+                "class" or "struct" or "record" or "trait" or "annotation" or "extensions" => Place.TypeBody,
+                "enum" => Place.Enum,
+                _ => Place.Statement
+            };
+        }
+
+        // `Name: Type {` inside a type is a property
+        var first = header.FindIndex(t => t.Type is not (TokenType.AccessModifierKind or TokenType.MemberModifierKind or TokenType.InheritanceModifierKind));
+        if (parent is Place.TypeBody && first >= 0 && first + 1 < header.Count
+            && header[first].Type is TokenType.Identifier && header[first + 1].Type is TokenType.Colon)
+            return Place.Property;
+
+        return Place.Statement;
+    }
+
+    List<Suggestion> Members(List<Token> sig, int recv, Ctx ctx)
+    {
+        var result = new List<Suggestion>();
+        var owner = TypeNameAt(sig, recv, ctx, 0);
+        if (owner is null) return result;
+
+        var isStaticRef = recv >= 0 && sig[recv].Type is TokenType.Identifier
+                          && !ctx.Locals.Any(l => l.Name == sig[recv].Value)
+                          && Index.TypeNames.Contains(sig[recv].Value);
+
+        foreach (var d in Index.MembersOf(owner))
+            if (isStaticRef ? d.IsStatic : !d.IsStatic) result.Add(new Suggestion(d.Name, d.Kind, d.Detail, 1));
+        return result.DistinctBy(s => (s.Label, s.Detail)).ToList();
     }
 
     static Hit FromDecl(Decl d, SourceSpan reference) => new(d.Kind, d.Name, d.Detail, d.Span, reference);

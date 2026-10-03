@@ -22,6 +22,7 @@ public static class Lsp
             .WithHandler<LuftHoverHandler>()
             .WithHandler<LuftDocumentSymbolHandler>()
             .WithHandler<LuftDefinitionHandler>()
+            .WithHandler<LuftSemanticTokensHandler>()
             .OnStarted((languageServer, _) =>
             {
                 // Pull in every .aero file of the workspace so cross-file modules and imports resolve

@@ -1,5 +1,4 @@
 module AeroTests.ComplexTest {
-
     // Generic trait with multiple methods
     public trait IComparable<T, TReturn> {
         fun CompareTo(other: T) -> TReturn
@@ -39,27 +38,27 @@ module AeroTests.ComplexTest {
     }
 
     // Generic class with primary constructor and generics
-    public class Container<T> {
-        public Items: T[] {
+    public class Container<G> {
+        public Items: G[] {
             get => it
             set => it = value
         }
 
-        public constructor Container(initial: T[]) {
+        public constructor Container(initial: G[]) {
             Items = initial
         }
 
         // Method overloading
-        public fun Get(index: Int) -> T {
+        public fun Get(index: Int) -> G {
             Items[index]
         }
 
-        public fun Get() -> T {
+        public fun Get() -> G {
             Items[0]
         }
 
         // Generic method
-        public fun Map<U>(transform: (item: T) -> U) -> U[] {
+        public fun Map<U>(transform: (item: G) -> U) -> U[] {
             []
         }
     }
@@ -106,11 +105,24 @@ module AeroTests.ComplexTest {
         }
     }
 
-    // Enum (enums can't be generic)
+    // Enum
     public enum Result {
         Success,
         Failure,
         Pending
+    }
+
+    public struct Optional<G>(value: G?, result: Result) {
+        public val Value: G? = value
+        public val Result: Result = result
+        
+        public static fun WithValue(value: G) -> Optional<G> {
+            Optional<G>(value, AeroTests.ComplexTest.Result.Success)
+        }
+        
+        public static fun Empty() -> Optional<G> {
+            Optional<G>(null, AeroTests.ComplexTest.Result.Failure)
+        }
     }
 
     // Extensions block

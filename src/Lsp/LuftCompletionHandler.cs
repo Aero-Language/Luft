@@ -17,7 +17,8 @@ public class LuftCompletionHandler(LuftCompilerService compiler) : CompletionHan
                 {
                     Label = s.Label,
                     Kind = KindOf(s.Kind),
-                    Detail = s.Detail
+                    Detail = s.Detail,
+                    SortText = $"{s.Rank}_{s.Label}"
                 })
                 .ToList();
 
@@ -34,6 +35,7 @@ public class LuftCompletionHandler(LuftCompilerService compiler) : CompletionHan
     static CompletionItemKind KindOf(string kind) => kind switch
     {
         "keyword" => CompletionItemKind.Keyword,
+        "module" => CompletionItemKind.Module,
         "class" or "annotation" or "type" => CompletionItemKind.Class,
         "struct" or "record" => CompletionItemKind.Struct,
         "trait" => CompletionItemKind.Interface,
@@ -44,6 +46,7 @@ public class LuftCompletionHandler(LuftCompilerService compiler) : CompletionHan
         "property" => CompletionItemKind.Property,
         "field" => CompletionItemKind.Field,
         "constant" or "const" => CompletionItemKind.Constant,
+        "type parameter" => CompletionItemKind.TypeParameter,
         _ => CompletionItemKind.Variable
     };
 

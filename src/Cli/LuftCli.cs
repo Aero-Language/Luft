@@ -1,8 +1,5 @@
 ﻿using Acli;
-using Luft.Ast;
-using Luft.Ast.Nodes;
-using Luft.Lexer;
-using Luft.TypeChecker;
+using Luft.Builder;
 using Luft.Utility;
 
 namespace Luft.Cli;
@@ -27,44 +24,12 @@ public static class LuftCli
 
     static void Build(Flag[] flags, string[] values)
     {
-        // Every stage reports into this one bag; nothing throws, so a single problem
-        // can no longer hide the ones after it.
-        var diagnostics = new DiagnosticBag();
-
-        List<FileNode> files = [];
-        foreach (var file in values)
-        {
-            if (!File.Exists(file))
-            {
-                Cli.Error($"File {file} not found. Terminating...");
-                return;
-            }
-            
-            var tk = new Tokenizer { Diagnostics = diagnostics };
-            var ab = new AstBuilder { Diagnostics = diagnostics };
-            
-            var tokens = tk.Tokenize(file);
-            var ast = ab.BuildAst(tokens);
-
-            files.Add(ast);
-        }
-
-        // Don't type-check a tree that is known to be broken; report the syntax errors first.
-        if (diagnostics.HasErrors)
-        {
-            PrintDiagnostics(diagnostics);
-            return;
-        }
+        var builder = new AeroBuilder();
         
-        var lookup = new TypeLookup { Diagnostics = diagnostics };
-        var typeResolver = new TypeResolver { Diagnostics = diagnostics };
-        var bodyResolver = new BodyResolver { Diagnostics = diagnostics };
-        
-        var table = lookup.Run(files.ToArray(), []);
-        typeResolver.Run(table);
-        bodyResolver.Run(table);
-
-        PrintDiagnostics(diagnostics);
+        if (builder.Diagnostics is { HasErrors: true })
+        {
+            PrintDiagnostics(builder.Diagnostics);
+        }
     }
     
     static void PrintDiagnostics(DiagnosticBag diagnostics)

@@ -11,6 +11,7 @@
     <ItemGroup>
       <ProjectReference Include="..\Lexer\Lexer.csproj" />
       <ProjectReference Include="..\Ast\Ast.csproj" />
+      <ProjectReference Include="..\TypeChecker\TypeChecker.csproj" />
       <ProjectReference Include="..\Utility\Utility.csproj" />
     </ItemGroup>
 

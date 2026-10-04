@@ -1,22 +1,84 @@
 ﻿using Luft.Ast;
+using Luft.Ast.Nodes;
+using Luft.Lexer;
+using Luft.TypeChecker;
+using Luft.Utility;
 
 namespace Luft.Builder;
 
-public class AeroBuilder
+public record BuildOptions(bool isExecutable)
+{
+    public static readonly BuildOptions Default = new BuildOptions(true);
+}
+
+public class AeroBuilder : AeroThrower
 {
     /// <summary>
-    /// Builds the <paramref name="files"/> as a module
+    /// Builds the <paramref name="projectFiles"/> as a module
     /// </summary>
-    /// <param name="files">An <typeparamref name="Array"/> of strings that contain all the file paths of a project</param>
-    /// <returns>The absolute path of the final executable</returns>
-    public string Build(string[] files)
+    /// <param name="projectFiles">An array of strings that contain all the file paths of a project</param>
+    /// <param name="libFiles">An array of strings that contain all the file paths of the libraries of a project</param>
+    /// <param name="options">The options for the build process</param>
+    /// <returns>The absolute path of the final executable or null if something failed</returns>
+    public string? Build(string[] projectFiles, string[] libFiles, BuildOptions options)
     {
-        foreach (string file in files)
+        List<FileNode> files = [];
+        List<ModuleDeclarationNode> libs = [];
+        foreach (var file in projectFiles)
         {
-            var tokens = new Lexer.Tokenizer().Tokenize(file); // Turns the string of code into tokens
-            var ast = new AstBuilder().BuildAst(tokens); // Turns the tokens into a tree of nodes
+            if (!File.Exists(file))
+            {
+                Error("File not found.", SourceSpan.Unknown);
+                return null;
+            }
+            
+            var tk = new Tokenizer { Diagnostics = this.Diagnostics };
+            var ab = new AstBuilder { Diagnostics = this.Diagnostics };
+            
+            var tokens = tk.Tokenize(file);
+            var ast = ab.BuildAst(tokens);
+
+            files.Add(ast);
         }
+        foreach (var file in libFiles)
+        {
+            if (!File.Exists(file))
+            {
+                Error("Library not found.", SourceSpan.Unknown);
+                return null;
+            }
+            
+            var tk = new Tokenizer { Diagnostics = this.Diagnostics };
+            var ab = new AstBuilder { Diagnostics = this.Diagnostics };
+            
+            var tokens = tk.Tokenize(file);
+            var ast = ab.BuildAst(tokens);
+
+            libs.AddRange(ast.Modules);
+        }
+
+        if (this.Diagnostics is { HasErrors: true }) return "";
         
-        return string.Empty;
+        var lookup = new TypeLookup { Diagnostics = this.Diagnostics };
+        var typeResolver = new TypeResolver { Diagnostics = this.Diagnostics };
+        var bodyResolver = new BodyResolver { Diagnostics = this.Diagnostics };
+        
+        var table = lookup.Run(files.ToArray(), libs.ToArray());
+        typeResolver.Run(table);
+        bodyResolver.Run(table);
+
+        return options.isExecutable 
+            ? BuildExecutable(files, libs) 
+            : BuildLibrary(files, libs);
+    }
+
+    private string BuildExecutable(List<FileNode> files, List<ModuleDeclarationNode> libs)
+    {
+        
+    }
+    
+    private string BuildLibrary(List<FileNode> files, List<ModuleDeclarationNode> libs)
+    {
+        
     }
 }

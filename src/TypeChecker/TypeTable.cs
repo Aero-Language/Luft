@@ -20,6 +20,9 @@ public sealed class TypeTable
     
     public Dictionary<string, ModuleSymbol> Modules { get; } = new();
     public Dictionary<string, List<ImportStatementNode>> ImportsByFile { get; } = new();
+    
+    // Filled by BodyResolver
+    public TypedInfo Typed { get; } = new();
 
     public ModuleSymbol GetOrAddModule(string modulePath, SourceSpan span)
     {

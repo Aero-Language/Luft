@@ -13,6 +13,7 @@ public class BodyResolver : AeroThrower
     private static readonly HashSet<AeroType> NumericTypes = [AeroType.Int, AeroType.Float, AeroType.Byte];
 
     private TypeTable Table { get; set; } = null!;
+    private TypedInfo Typed => Table.Typed;
 
     // Ambient context, set while descending into whatever body currently defines it and restored
     // on the way back out — null/false means "not available here".
@@ -30,11 +31,27 @@ public class BodyResolver : AeroThrower
         }
     }
     
-    private static BodyScope ScopeFor(ValueList<ParamNode> parameters)
+    // Adds the variable to the scope and records which node declared it
+    private bool Declare(BodyScope scope, VariableSymbol symbol, AstNode node)
+    {
+        Typed.Bindings[node] = new LocalBinding(symbol);
+        return scope.TryAdd(symbol);
+    }
+    
+    private BodyScope ScopeFor(ValueList<ParamNode> parameters)
     {
         var body = new BodyScope();
-        foreach (var p in parameters) body.TryAdd(new VariableSymbol(p));
+        foreach (var p in parameters) Declare(body, new VariableSymbol(p), p);
         return body;
+    }
+    
+    private void ResolveDefaults(ValueList<ParamNode> parameters, TypeScope scope)
+    {
+        foreach (var p in parameters)
+        {
+            if (p.Initializer is not null)
+                CheckTypes(ResolveExpression(p.Initializer, scope, new()), p.Type, scope, p.Span);
+        }
     }
     
     private void CheckScope(TypeScope scope)
@@ -47,6 +64,7 @@ public class BodyResolver : AeroThrower
         foreach (var extensionFunctions in scope.ExtensionFunctions.Values)
             CheckExtensionFunctions(extensionFunctions, scope);
         foreach (var operators in scope.Operators.Values) CheckOperators(operators, scope);
+        foreach (var constructor in scope.Constructors) CheckConstructor(constructor, scope);
 
         // Each nested type's own members see 'self' bound to that type while we're inside it.
         foreach (var types in scope.Types.Values)
@@ -131,7 +149,7 @@ public class BodyResolver : AeroThrower
                 CheckStatements(property.Getter.Body.Statements, scope);
             
             if (property.Setter?.Body is not null)
-                CheckStatements(property.Setter.Body.Statements, scope, SetterScope(property.Type, property.Span));
+                CheckStatements(property.Setter.Body.Statements, scope, SetterScope(property.Setter, property.Type, property.Span));
             
             CurrentItType = previousIt;
             
@@ -154,7 +172,7 @@ public class BodyResolver : AeroThrower
                 CheckStatements(property.Getter.Body.Statements, scope);
             
             if (property.Setter?.Body is not null)
-                CheckStatements(property.Setter.Body.Statements, scope, SetterScope(property.Type, property.Span));
+                CheckStatements(property.Setter.Body.Statements, scope, SetterScope(property.Setter, property.Type, property.Span));
             
             if (property.Initializer is not null)
             {
@@ -168,16 +186,18 @@ public class BodyResolver : AeroThrower
 
     // A setter's body sees an implicit `value` parameter, the same way a function sees its
     // declared ones — it's just never written out in the source.
-    private static BodyScope SetterScope(AeroType propertyType, SourceSpan span)
+    private BodyScope SetterScope(PropertyAccessorNode setter, AeroType propertyType, SourceSpan span)
     {
         var scope = new BodyScope();
-        scope.TryAdd(new VariableSymbol("value", propertyType, span));
+        Declare(scope, new VariableSymbol("value", propertyType, span), setter);
         return scope;
     }
     private void CheckFunctions(List<FunctionSymbol> functions, TypeScope scope)
     {
         foreach (var function in functions)
         {
+            ResolveDefaults(function.Declaration.Parameters, scope);
+            
             if (function.Body is not null)
             {
                 CheckStatements(function.Body.Statements, scope, ScopeFor(function.Declaration.Parameters), expectedReturn: function.ReturnType);
@@ -188,6 +208,8 @@ public class BodyResolver : AeroThrower
     {
         foreach (var function in functions)
         {
+            ResolveDefaults(function.Declaration.Parameters, scope);
+            
             if (function.Body is not null)
             {
                 var previousSelf = CurrentSelfType;
@@ -206,14 +228,26 @@ public class BodyResolver : AeroThrower
     {
         foreach (var op in operators)
         {
+            ResolveDefaults(op.Declaration.Parameters, scope);
+            
             if (op.Body is not null)
             {
                 CheckStatements(op.Body.Statements, scope, ScopeFor(op.Declaration.Parameters), expectedReturn: op.ReturnType);
             }
         }
     }
+    private void CheckConstructor(ConstructorSymbol constructor, TypeScope scope)
+    {
+        ResolveDefaults(constructor.Declaration.Parameters, scope);
 
-    private void CheckStatements(ValueList<StatementNode> statements, TypeScope scope, BodyScope? bScope = null, AeroType? expectedReturn = null)
+        if (constructor.Body is not null)
+        {
+            CheckStatements(constructor.Body.Statements, scope, ScopeFor(constructor.Declaration.Parameters), expectedReturn: AeroType.Void);
+        }
+    }
+
+    // Returns the scope the statements ran in, so a caller can resolve more in the same context
+    private BodyScope CheckStatements(ValueList<StatementNode> statements, TypeScope scope, BodyScope? bScope = null, AeroType? expectedReturn = null)
     {
         bScope = bScope is null ? new() : new(bScope);
 
@@ -225,7 +259,7 @@ public class BodyResolver : AeroThrower
                 case VariableStatementNode v:
                     var initType = v.Initializer is not null ? ResolveExpression(v.Initializer, scope, bScope) : AeroType.Void;
                     var varType = v.Type.IsAuto ? initType : v.Type;
-                    if (!bScope.TryAdd(new VariableSymbol(v, varType))) Error("Variable already defined", v.Span);
+                    if (!Declare(bScope, new VariableSymbol(v, varType), v)) Error("Variable already defined", v.Span);
                     break;
                 case ReturnStatementNode r:
                     var returned = r.Value is null ? AeroType.Void : ResolveExpression(r.Value, scope, bScope);
@@ -259,6 +293,8 @@ public class BodyResolver : AeroThrower
                     break;
             }
         }
+
+        return bScope;
     }
 
     private void CheckTypes(AeroType? t1, AeroType? t2, TypeScope scope, SourceSpan span)
@@ -319,7 +355,7 @@ public class BodyResolver : AeroThrower
         // 'target op= value' is resolved exactly as 'target = target op value' would be:
         // run the plain operator through the same overload/primitive search a normal binary
         // expression uses, then check that its result still fits back into the target.
-        var resultType = ResolveOperator(plainOp, targetType, valueType, scope, a.Span);
+        var resultType = ResolveOperator(plainOp, targetType, valueType, scope, a);
         CheckTypes(resultType, targetType, scope, a.Span);
     }
 
@@ -342,8 +378,7 @@ public class BodyResolver : AeroThrower
             MatchExpressionNode m => ResolveMatch(m, scope, bScope),
             LiteralExpressionNode l => ResolveLiteral(l),
             ArrayLiteralExpressionNode al => ResolveArrayLiteral(al, scope, bScope),
-            IdentifierExpressionNode or MemberAccessExpressionNode
-                => ToValue(ResolveName(expression, scope, bScope), expression.Span),
+            IdentifierExpressionNode or MemberAccessExpressionNode => ResolveValueName(expression, scope, bScope),
             CallExpressionNode c => ResolveCall(c, scope, bScope),
             BinaryExpressionNode b => ResolveBinary(b, scope, bScope),
             UnaryExpressionNode u => ResolveUnary(u, scope, bScope),
@@ -357,6 +392,8 @@ public class BodyResolver : AeroThrower
             SpawnExpressionNode sp => ResolveBlock(sp.Body, scope, bScope),
             _ => ResolveError(expression)
         };
+
+        Typed.Types[expression] = result;
 
         if (expectedType is not null && result != AeroType.Error && result != expectedType)
         {
@@ -376,12 +413,16 @@ public class BodyResolver : AeroThrower
     {
         CheckStatements(expr.Statements, scope, bScope);
 
-        if (expr.Statements.Any() && expr.Statements[^1] is ReturnStatementNode r && r.Value is not null)
-            return ResolveExpression(r.Value, scope, bScope);
-        if (expr.Statements.Any() && expr.Statements[^1] is ExpressionStatementNode e)
-            return ResolveExpression(e.Expression, scope, bScope);
-        return AeroType.Void;
+        // The last statement was already resolved above, so read its type back instead of resolving it again
+        var last = expr.Statements.Count > 0 ? expr.Statements[^1] : null;
+        return last switch
+        {
+            ReturnStatementNode { Value: { } v } => ResolvedType(v),
+            ExpressionStatementNode e => ResolvedType(e.Expression),
+            _ => AeroType.Void
+        };
     }
+    private AeroType ResolvedType(ExpressionNode expr) => Typed.Types.GetValueOrDefault(expr, AeroType.Error);
     private AeroType ResolveIf(IfExpressionNode expr, TypeScope scope, BodyScope bScope)
     {
         CheckTypes(ResolveExpression(expr.Condition, scope, bScope), AeroType.Bool, scope, expr.Span);
@@ -393,7 +434,8 @@ public class BodyResolver : AeroThrower
             CheckTypes(ResolveExpression(elseIf.body, scope, bScope), returnType, scope, elseIf.condition.Span);
         }
 
-        CheckTypes(ResolveExpression(expr.ThenBody, scope, bScope), returnType, scope, expr.ThenBody.Span);
+        if (expr.ElseBody is not null) ResolveExpression(expr.ElseBody, scope, bScope);
+
         return returnType;
     }
     private AeroType ResolveFor(ForExpressionNode expr, TypeScope scope, BodyScope bScope)
@@ -402,7 +444,7 @@ public class BodyResolver : AeroThrower
 
         var loopScope = new BodyScope(bScope); // the loop variable lives only inside the loop
         var itemType = expr.Item.Type.IsAuto ? ElementTypeOf(cType, expr.Collection.Span) : expr.Item.Type;
-        if (!loopScope.TryAdd(new VariableSymbol(expr.Item.Name, itemType, expr.Item.Span)))
+        if (!Declare(loopScope, new VariableSymbol(expr.Item.Name, itemType, expr.Item.Span), expr.Item))
             Error("Variable already declared in scope", expr.Span);
 
         var wasInLoop = InLoop;
@@ -466,7 +508,7 @@ public class BodyResolver : AeroThrower
             case TypePattern t:
                 // NOTE: doesn't verify `t.Type` actually exists yet — a typo'd type name in a
                 // pattern currently goes unreported. Worth a follow-up pass.
-                if (t.Binding is not null && !bScope.TryAdd(new VariableSymbol(t.Binding, t.Type, t.Span)))
+                if (t.Binding is not null && !Declare(bScope, new VariableSymbol(t.Binding, t.Type, t.Span), t))
                     Error("Variable already defined", t.Span);
                 break;
             case RangePattern r:
@@ -583,6 +625,8 @@ public class BodyResolver : AeroThrower
             if (ParametersMatch(SubstParams(o.Parameters, fn.Substitute), argTypes, generics, bound)) matches.Add((o, bound));
         }
 
+        if (matches.Count == 1) Typed.Bindings[expr] = new FunctionBinding(matches[0].Fn, matches[0].Bound, fn.Substitute);
+
         return matches.Count switch
         {
             0 => Fail($"No overload of '{fn.Overloads[0].Name}' matches the given arguments", expr.Span),
@@ -600,7 +644,9 @@ public class BodyResolver : AeroThrower
 
         // The call has no type arguments, so the type's own generic parameters match any argument
         var generics = type.GenericParameters.Select(g => g.Name).ToHashSet();
-        var matches = ConstructorsOf(type).Where(p => ParametersMatch(p, argTypes, generics)).ToList();
+        var matches = ConstructorsOf(type).Where(c => ParametersMatch(c.Parameters, argTypes, generics)).ToList();
+
+        if (matches.Count == 1) Typed.Bindings[expr] = new ConstructorBinding(type, matches[0].Symbol);
 
         return matches.Count switch
         {
@@ -612,23 +658,25 @@ public class BodyResolver : AeroThrower
 
     // Parameter lists a call can target: declared constructors and the primary one. With none
     // declared, a record takes its fields in order and anything else gets the empty default.
-    private static List<ValueList<ParamSymbol>> ConstructorsOf(TypeSymbol type)
+    // Symbol is null for everything that isn't an explicit `constructor` declaration.
+    private static List<(ConstructorSymbol? Symbol, ValueList<ParamSymbol> Parameters)> ConstructorsOf(TypeSymbol type)
     {
-        var result = type.Scope.Constructors.Select(c => c.Parameters).ToList();
+        var result = new List<(ConstructorSymbol? Symbol, ValueList<ParamSymbol> Parameters)>();
+        foreach (var c in type.Scope.Constructors) result.Add((c, c.Parameters));
 
         if (type.Scope.PrimaryConstructor is { } primary)
-            result.Add(primary.Variables.Select(v => new ParamSymbol(v.Name, v.Type, v.VarKind, v.Initializer)).ToValueList());
+            result.Add((null, primary.Variables.Select(v => new ParamSymbol(v.Name, v.Type, v.VarKind, v.Initializer)).ToValueList()));
 
         if (result.Count > 0) return result;
 
-        result.Add(ValueList<ParamSymbol>.Empty);
+        result.Add((null, ValueList<ParamSymbol>.Empty));
         if (type is RecordSymbol)
         {
             var fields = type.Scope.Fields.Values.SelectMany(f => f)
                 .Where(f => !IsStatic(f.Declaration.MemberMods, f.VarKind))
                 .Select(f => new ParamSymbol(f.Name, f.Type, f.VarKind, f.Initializer))
                 .ToValueList();
-            if (fields.Count > 0) result.Add(fields);
+            if (fields.Count > 0) result.Add((null, fields));
         }
 
         return result;
@@ -800,20 +848,25 @@ public class BodyResolver : AeroThrower
         var left = ResolveExpression(expr.Left, scope, bScope);
         var right = ResolveExpression(expr.Right, scope, bScope);
 
-        return ResolveOperator(expr.Operator, left, right, scope, expr.Span);
+        return ResolveOperator(expr.Operator, left, right, scope, expr);
     }
 
     // Single entry point every binary op (and compound assignment) goes through: try a
     // user-defined overload first, fall back to the built-in primitive rules, and only
     // error if neither has anything for this (operator, left, right) combination.
-    private AeroType ResolveOperator(Operator op, AeroType left, AeroType right, TypeScope scope, SourceSpan span)
+    // `node` is the binary expression or compound assignment, it receives the OperatorBinding.
+    private AeroType ResolveOperator(Operator op, AeroType left, AeroType right, TypeScope scope, AstNode node)
     {
         if (left == AeroType.Error || right == AeroType.Error) return AeroType.Error;
 
-        if (TryOperatorOverload(op, left, [right], scope, span.FilePath) is { } overloadResult) return overloadResult;
+        if (TryOperatorOverload(op, left, [right], scope, node.Span.FilePath) is { } overload)
+        {
+            Typed.Bindings[node] = new OperatorBinding(overload);
+            return overload.ReturnType;
+        }
         if (TryPrimitiveOperator(op, left, right) is { } primitiveResult) return primitiveResult;
 
-        return Fail($"Operator '{op.AsString()}' is not defined for '{left}' and '{right}'", span);
+        return Fail($"Operator '{op.AsString()}' is not defined for '{left}' and '{right}'", node.Span);
     }
 
     // Looks up a real `operator fun` declaration (an OperatorDeclarationNode, registered by
@@ -822,12 +875,10 @@ public class BodyResolver : AeroThrower
     // for a binary operator's right-hand operand, zero for a unary operator. Returns null — not
     // an error — when there's no user type or no matching overload, so callers can fall through
     // to the primitive table.
-    private AeroType? TryOperatorOverload(Operator op, AeroType receiver, AeroType[] argTypes, TypeScope scope, string filePath)
+    private OperatorSymbol? TryOperatorOverload(Operator op, AeroType receiver, AeroType[] argTypes, TypeScope scope, string filePath)
     {
         var symbol = FindType(receiver, scope, filePath);
-        if (symbol is null) return null;
-
-        return FindOperatorOverload(symbol, op, argTypes, [])?.ReturnType;
+        return symbol is null ? null : FindOperatorOverload(symbol, op, argTypes, []);
     }
 
     private OperatorSymbol? FindOperatorOverload(TypeSymbol type, Operator op, AeroType[] argTypes, HashSet<TypeSymbol> seen)
@@ -903,8 +954,11 @@ public class BodyResolver : AeroThrower
 
         // A unary overload is an operator declaration with zero parameters (e.g. `operator fun Subtract() -> Vector2`
         // for unary '-'), as opposed to the one-parameter form binary '-' looks for.
-        if (TryOperatorOverload(expr.Operator, operand, [], scope, expr.Span.FilePath) is { } overloadResult)
-            return overloadResult;
+        if (TryOperatorOverload(expr.Operator, operand, [], scope, expr.Span.FilePath) is { } overload)
+        {
+            Typed.Bindings[expr] = new OperatorBinding(overload);
+            return overload.ReturnType;
+        }
 
         return expr.Operator switch
         {
@@ -949,7 +1003,7 @@ public class BodyResolver : AeroThrower
         var lambdaScope = new BodyScope(bScope);
         foreach (var p in expr.Parameters)
         {
-            if (!lambdaScope.TryAdd(new VariableSymbol(p)))
+            if (!Declare(lambdaScope, new VariableSymbol(p), p))
                 Error("Parameter already defined", p.Span);
         }
 
@@ -981,7 +1035,7 @@ public class BodyResolver : AeroThrower
         var name = expr.Name;
         var file = expr.Span.FilePath;
         
-        if (bScope.Get(name) is { } local) return new ValueRes(local.Type);
+        if (bScope.Get(name) is { } local) return new ValueRes(local.Type, new LocalBinding(local));
         
         for (var s = scope; s is not null; s = s.ContainingScope)
             if (LookupInScope(s, name) is { } found) return found;
@@ -1044,7 +1098,7 @@ public class BodyResolver : AeroThrower
                 var map = TypeArgMap(symbol, v.Type);
                 return accessed switch
                 {
-                    ValueRes r => new ValueRes(Subst(r.Type, map)),
+                    ValueRes r => r with { Type = Subst(r.Type, map) },
                     FunctionsRes f => f with { Substitute = map },
                     _ => accessed
                 };
@@ -1099,8 +1153,8 @@ public class BodyResolver : AeroThrower
     
     private Resolved? LookupInScope(TypeScope s, string name)
     {
-        if (s.Fields.TryGetValue(name, out var fields))    return new ValueRes(TypeOfField(fields[0], s));
-        if (s.Properties.TryGetValue(name, out var props)) return new ValueRes(props[0].Type);
+        if (s.Fields.TryGetValue(name, out var fields))    return new ValueRes(TypeOfField(fields[0], s), new FieldBinding(fields[0]));
+        if (s.Properties.TryGetValue(name, out var props)) return new ValueRes(props[0].Type, new PropertyBinding(props[0]));
         if (s.Functions.TryGetValue(name, out var funcs))  return new FunctionsRes(funcs);
         if (s.Types.TryGetValue(name, out var types))      return new TypeRes(types[0]);
         return null;
@@ -1131,16 +1185,16 @@ public class BodyResolver : AeroThrower
         if (type is EnumSymbol e)
         {
             if (e.Members.Any(m => m.Name == name))
-                return new Member(new ValueRes(new ScalarType(e.Name)), IsStaticMember: true);
+                return new Member(new ValueRes(new ScalarType(e.Name), new EnumMemberBinding(e, name)), IsStaticMember: true);
             if (e.Parameters.FirstOrDefault(p => p.Name == name) is { } param)
-                return new Member(new ValueRes(param.Type), IsStaticMember: false);
+                return new Member(new ValueRes(param.Type, new EnumParamBinding(e, param)), IsStaticMember: false);
         }
 
         var s = type.Scope;
         if (s.Fields.TryGetValue(name, out var fields))
-            return new Member(new ValueRes(TypeOfField(fields[0], s)), IsStatic(fields[0].Declaration.MemberMods, fields[0].VarKind));
+            return new Member(new ValueRes(TypeOfField(fields[0], s), new FieldBinding(fields[0])), IsStatic(fields[0].Declaration.MemberMods, fields[0].VarKind));
         if (s.Properties.TryGetValue(name, out var props))
-            return new Member(new ValueRes(props[0].Type), IsStatic(props[0].Declaration.MemberMods));
+            return new Member(new ValueRes(props[0].Type, new PropertyBinding(props[0])), IsStatic(props[0].Declaration.MemberMods));
         if (s.Functions.TryGetValue(name, out var funcs))
             return new Member(new FunctionsRes(funcs), funcs.All(f => f.MemberMods.HasFlag(MemberMod.Static)));
         if (s.Types.TryGetValue(name, out var nested))
@@ -1154,12 +1208,36 @@ public class BodyResolver : AeroThrower
     
     
     
-    private Resolved ResolveName(ExpressionNode expr, TypeScope scope, BodyScope bScope) => expr switch
+    private Resolved ResolveName(ExpressionNode expr, TypeScope scope, BodyScope bScope)
     {
-        IdentifierExpressionNode id   => ResolveIdentifier(id, scope, bScope),
-        MemberAccessExpressionNode ma => ResolveMemberAccess(ma, scope, bScope),
-        _ => new ValueRes(ResolveExpression(expr, scope, bScope))
-    };
+        var resolved = expr switch
+        {
+            IdentifierExpressionNode id   => ResolveIdentifier(id, scope, bScope),
+            MemberAccessExpressionNode ma => ResolveMemberAccess(ma, scope, bScope),
+            _ => new ValueRes(ResolveExpression(expr, scope, bScope))
+        };
+
+        var binding = resolved switch
+        {
+            ValueRes { Ref: { } b } => b,
+            TypeRes t => new TypeBinding(t.Symbol),
+            ModuleRes m => new ModuleBinding(m.Path),
+            _ => (Binding?)null
+        };
+        if (binding is not null) Typed.Bindings[expr] = binding;
+
+        return resolved;
+    }
+    
+    // A name used as a value; a lone function becomes a function reference
+    private AeroType ResolveValueName(ExpressionNode expr, TypeScope scope, BodyScope bScope)
+    {
+        var resolved = ResolveName(expr, scope, bScope);
+        if (resolved is FunctionsRes { Overloads: [var only] } fr)
+            Typed.Bindings[expr] = new FunctionBinding(only, new(), fr.Substitute);
+
+        return ToValue(resolved, expr.Span);
+    }
     private Resolved Access(TypeSymbol symbol, string name, bool wantStatic, SourceSpan span)
     {
         var member = FindMember(symbol, name, []);
@@ -1197,7 +1275,7 @@ public class BodyResolver : AeroThrower
     
     
     private abstract record Resolved;
-    private sealed record ValueRes(AeroType Type) : Resolved;
+    private sealed record ValueRes(AeroType Type, Binding? Ref = null) : Resolved;
     private sealed record TypeRes(TypeSymbol Symbol) : Resolved;
     private sealed record ModuleRes(string Path) : Resolved;
     private sealed record FunctionsRes(List<FunctionSymbol> Overloads, Dictionary<string, AeroType>? Substitute = null) : Resolved;
@@ -1205,4 +1283,4 @@ public class BodyResolver : AeroThrower
     private static readonly ErrorRes Failed = new();
 
     private sealed record Member(Resolved Result, bool IsStaticMember);
-}
+}       

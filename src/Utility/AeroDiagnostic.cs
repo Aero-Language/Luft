@@ -20,7 +20,9 @@ public enum CompilerStage
     Parser,
     TypeLookup,
     TypeResolver,
-    BodyResolver
+    BodyResolver,
+    CodeGen,
+    Linker
 }
 
 /// <summary>

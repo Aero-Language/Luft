@@ -9,9 +9,16 @@
     </PropertyGroup>
 
     <PropertyGroup>
+        <!-- libLLVM and libLLVMSharp deliver their native files through runtime.json, which only applies when a RID is set -->
+        <RuntimeIdentifier Condition="'$(RuntimeIdentifier)' == ''">$(NETCoreSdkRuntimeIdentifier)</RuntimeIdentifier>
+        <SelfContained Condition="'$(SelfContained)' == ''">false</SelfContained>
+        <AppendRuntimeIdentifierToOutputPath>false</AppendRuntimeIdentifierToOutputPath>
+    </PropertyGroup>
+
+    <PropertyGroup>
         <PublishTrimmed>true</PublishTrimmed>
         <TrimMode>partial</TrimMode>
-        
+
         <EnableCompressionInSingleFile>true</EnableCompressionInSingleFile>
 
         <DebuggerSupport>false</DebuggerSupport>
@@ -26,21 +33,21 @@
 
         <InvariantGlobalization>true</InvariantGlobalization>
     </PropertyGroup>
-    
+
     <ItemGroup>
-      <ProjectReference Include="..\Builder\Builder.csproj" />
-      <ProjectReference Include="..\Ast\Ast.csproj" />
-      <ProjectReference Include="..\Printers\Printers.csproj" />
-      <ProjectReference Include="..\TypeChecker\TypeChecker.csproj" />
+        <ProjectReference Include="..\Builder\Builder.csproj" />
+        <ProjectReference Include="..\Ast\Ast.csproj" />
+        <ProjectReference Include="..\Printers\Printers.csproj" />
+        <ProjectReference Include="..\TypeChecker\TypeChecker.csproj" />
     </ItemGroup>
 
     <ItemGroup>
-      <Content Include="test.aero" CopyToOutputDirectory="PreserveNewest"/>
-      <Content Include="easytest.aero" CopyToOutputDirectory="PreserveNewest"/>
+        <Content Include="test.aero" CopyToOutputDirectory="PreserveNewest"/>
+        <Content Include="easytest.aero" CopyToOutputDirectory="PreserveNewest"/>
     </ItemGroup>
 
     <ItemGroup>
-      <PackageReference Include="AeroLang.ACLI" Version="0.3.2" />
+        <PackageReference Include="AeroLang.ACLI" Version="0.3.2" />
     </ItemGroup>
 
 </Project>

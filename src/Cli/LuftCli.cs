@@ -25,6 +25,7 @@ public static class LuftCli
     static void Build(Flag[] flags, string[] values)
     {
         var builder = new AeroBuilder();
+        builder.Build(values, [], new(isExecutable: true));
         
         if (builder.Diagnostics is { HasErrors: true })
         {

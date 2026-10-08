@@ -117,11 +117,11 @@ module AeroTests.ComplexTest {
         public val Result: Result = result
         
         public static fun WithValue(value: G) -> Optional<G> {
-            Optional<G>(value, Result.Success)
+            Optional<G>(value, AeroTests.ComplexTest.Result.Success)
         }
         
         public static fun Empty() -> Optional<G> {
-            Optional<G>(null, Result.Failure)
+            Optional<G>(null, AeroTests.ComplexTest.Result.Failure)
         }
         
         public IsDone: Bool { get => Result is Result.Success }

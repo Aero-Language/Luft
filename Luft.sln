@@ -69,4 +69,17 @@ Global
 		{2E3D16B9-2125-49CC-BC45-FF7BC2EB134C} = {EFA335B5-55D3-4589-AA44-03B42436C3CB}
 		{6ECFCD3D-B3D3-4240-8748-90151D3B596B} = {E7C2DA89-E55E-4E40-99D5-54FFB0FDBA82}
 	EndGlobalSection
+	GlobalSection(RiderSharedRunConfigurations) = postSolution
+		File = ..\..\Code\Ai\AeroLanguage\Luft\.run\Cli.run.xml
+		File = ..\..\Code\Ai\AeroLanguage\Luft\.run\Publish Cli - Win.run.xml
+		File = ..\..\Code\Ai\AeroLanguage\Luft\.run\Publish Cli.run.xml
+		File = ..\..\Code\Ai\AeroLanguage\Luft\.run\Publish Lsp - Win.run.xml
+		File = ..\..\Code\Ai\AeroLanguage\Luft\.run\Publish Lsp.run.xml
+		File = ..\..\Code\Ai\AeroLanguage\Jbr-AerolangSupport\.run\runIde.run.xml
+		File = ..\..\Code\Ai\AeroLanguage\Jbr-AerolangSupport\.run\runTests.run.xml
+		File = ..\..\Code\Ai\AeroLanguage\Jbr-AerolangSupport\.run\runVerifications.run.xml
+		File = ..\..\IdeaProjects\Jbr-AerolangSupport\.run\runIde.run.xml
+		File = ..\..\IdeaProjects\Jbr-AerolangSupport\.run\runTests.run.xml
+		File = ..\..\IdeaProjects\Jbr-AerolangSupport\.run\runVerifications.run.xml
+	EndGlobalSection
 EndGlobal

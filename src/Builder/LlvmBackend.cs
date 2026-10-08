@@ -34,7 +34,6 @@ public static class LlvmBackend
             LLVMCodeModel.LLVMCodeModelDefault);
 
         module.Target = triple;
-        module.DataLayoutObject = machine.CreateTargetDataLayout();
 
         return machine.TryEmitToFile(module, objectPath, LLVMCodeGenFileType.LLVMObjectFile, out error);
     }

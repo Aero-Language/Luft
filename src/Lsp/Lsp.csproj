@@ -31,7 +31,7 @@
     </PropertyGroup>
     
     <ItemGroup>
-      <PackageReference Include="OmniSharp.Extensions.LanguageServer" Version="0.19.9" />
+      <PackageReference Include="OmniSharp.Extensions.LanguageServer" Version="0.19.11" />
     </ItemGroup>
 
     <ItemGroup>

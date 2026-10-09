@@ -1,4 +1,5 @@
 using System.Diagnostics;
+using LLVMSharp.Interop;
 using Luft.Utility;
 
 namespace Luft.Builder;
@@ -8,12 +9,12 @@ public sealed class Linker : AeroThrower
 {
     protected override CompilerStage Stage => CompilerStage.Linker;
 
-    public bool Link(string objectPath, string outputPath, bool isLibrary, string? driverPath)
+    public bool Link(string objectPath, string outputPath, bool isLibrary, string? driverPath = null)
     {
         var driver = driverPath ?? FindOnPath("clang");
         if (driver is null)
         {
-            Error("Could not find 'clang' on PATH. Install clang with lld or set AeroBuilderSettings.LinkerPath.", SourceSpan.Unknown);
+            Error("Could not find 'clang' on PATH. Install clang or set AeroBuilderSettings.LinkerPath.", SourceSpan.Unknown);
             return false;
         }
 
@@ -56,7 +57,13 @@ public sealed class Linker : AeroThrower
         foreach (var dir in path.Split(Path.PathSeparator, StringSplitOptions.RemoveEmptyEntries))
         {
             var candidate = Path.Combine(dir, file);
-            if (File.Exists(candidate)) return candidate;
+            var fileInfo = new FileInfo(candidate);
+
+            if (fileInfo.Exists)
+            {
+                if (fileInfo.Attributes.HasFlag(FileAttributes.ReparsePoint)) return fileInfo.LinkTarget;
+                else return candidate;
+            }
         }
 
         return null;

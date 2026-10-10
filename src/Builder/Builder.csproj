@@ -16,7 +16,7 @@
     </ItemGroup>
 
     <ItemGroup>
-        <None Include="Runtime\aero_runtime.c" CopyToOutputDirectory="PreserveNewest" />
+        <Content Include="Runtime\aero_runtime.c" CopyToOutputDirectory="PreserveNewest" />
     </ItemGroup>
 
     <ItemGroup>

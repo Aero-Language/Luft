@@ -172,7 +172,7 @@ public sealed partial class FunctionEmitter : AeroThrower, IDisposable
     {
         if (a.Operator != Operator.Assign)
         {
-            Fail($"'{a.Operator.AsString()}' needs arithmetic, which is lowered in sub-task 5", a.Span);
+            LowerCompoundAssignment(a);
             return;
         }
 

@@ -7,7 +7,7 @@ using Luft.Utility;
 
 namespace Luft.Builder;
 
-// Only what statements need so far: literals, locals and direct calls. The rest is sub-task 5.
+// Literals, locals, direct calls and primitive operators so far. The rest is sub-task 5b onwards.
 public sealed partial class FunctionEmitter
 {
     // A Void call succeeds with a default value
@@ -21,6 +21,8 @@ public sealed partial class FunctionEmitter
             case IdentifierExpressionNode id: return TryLowerLocal(id, out value);
             case ScopedExpressionNode s: return TryLowerExpression(s.Scoped, out value);
             case CallExpressionNode c: return TryLowerCall(c, out value);
+            case BinaryExpressionNode b: return TryLowerBinary(b, out value);
+            case UnaryExpressionNode u: return TryLowerUnary(u, out value);
             default:
                 Fail($"'{expression.GetType().Name}' is not lowered yet (sub-task 5)", expression.Span);
                 return false;

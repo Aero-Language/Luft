@@ -176,14 +176,10 @@ public sealed partial class FunctionEmitter : AeroThrower, IDisposable
             return;
         }
 
-        if (_typed.BindingOf(a.Target) is not LocalBinding { Variable: var variable } || !_locals.TryGetValue(variable, out var slot))
-        {
-            Fail("Only locals and parameters can be assigned so far", a.Target.Span);
-            return;
-        }
+        if (!TryGetAddress(a.Target, out var address, out _, out var targetType)) return;
 
         if (!TryLowerValue(a.Value, out var value)) return;
-        _builder.BuildStore(Coerce(value, _typed.TypeOf(a.Value), variable.Type, a.Span), slot.Address);
+        _builder.BuildStore(Coerce(value, _typed.TypeOf(a.Value), targetType, a.Span), address);
     }
 
     private void LowerReturn(ReturnStatementNode r)

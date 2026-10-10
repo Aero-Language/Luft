@@ -163,31 +163,47 @@ public sealed class CodeGenerator : AeroThrower, IDisposable
     // The C main calls Aero's Main and passes its Int result on as the exit code
     private bool EmitEntryPoint()
     {
-        var all = _functions.Keys.Where(f => f.Name == "Main").ToList();
-        if (all.Count > 1)
+        var mains = _functions.Keys.Where(f => f.Name == "Main").ToList();
+        if (mains.Count > 1)
         {
-            Error("There is more than one 'Main' function.", all[1].Span);
+            Error("There is more than one 'Main' function.", mains[1].Span);
             return false;
         }
-        if (all.Count == 1 && all[0].Parameters.Count > 0)
-        {
-            Error("'Main' with arguments is not supported yet, it needs arrays (sub-task 5).", all[0].Span);
-            return false;
-        }
-        var mains = all;
 
-        var mainType = LLVMTypeRef.CreateFunction(_context.Int32Type, []);
+        var main0 = mains.Count == 1 ? mains[0] : null;
+        var takesArgs = main0 is { Parameters.Count: 1 } && main0.Parameters[0].Type is ArrayType { ElementType: var element } && element == AeroType.String;
+        if (main0 is not null && main0.Parameters.Count > 0 && !takesArgs)
+        {
+            Error("'Main' can only take a single 'String[]' parameter.", main0.Span);
+            return false;
+        }
+
+        var mainType = takesArgs
+            ? LLVMTypeRef.CreateFunction(_context.Int32Type, [_context.Int32Type, _types.Ptr])
+            : LLVMTypeRef.CreateFunction(_context.Int32Type, []);
         var main = Module.AddFunction("main", mainType);
 
         _builder.PositionAtEnd(_context.AppendBasicBlock(main, "entry"));
 
         var exitCode = LLVMValueRef.CreateConstInt(_context.Int32Type, 0);
-        if (mains.Count == 1)
+        if (main0 is not null)
         {
-            var declared = _functions[mains[0]];
-            var returnsVoid = mains[0].ReturnType == AeroType.Void;
-            var call = _builder.BuildCall2(declared.Type, declared.Value, Array.Empty<LLVMValueRef>(), returnsVoid ? "" : "result");
-            if (mains[0].ReturnType == AeroType.Int) exitCode = call;
+            var declared = _functions[main0];
+            var returnsVoid = main0.ReturnType == AeroType.Void;
+            var arguments = Array.Empty<LLVMValueRef>();
+
+            if (takesArgs)
+            {
+                // The runtime turns argv (without the program name) into a UTF-16 String[]
+                var slot = _builder.BuildAlloca(_types.ArrayStruct, "args");
+                var convertType = LLVMTypeRef.CreateFunction(_context.VoidType, [_types.Ptr, _context.Int32Type, _types.Ptr]);
+                var convert = Module.AddFunction("aero_args", convertType);
+                _builder.BuildCall2(convertType, convert, [slot, main.GetParam(0), main.GetParam(1)]);
+                arguments = [_builder.BuildLoad2(_types.ArrayStruct, slot, "args")];
+            }
+
+            var call = _builder.BuildCall2(declared.Type, declared.Value, arguments, returnsVoid ? "" : "result");
+            if (main0.ReturnType == AeroType.Int) exitCode = call;
         }
 
         _builder.BuildRet(exitCode);

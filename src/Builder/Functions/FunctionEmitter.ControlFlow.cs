@@ -314,11 +314,7 @@ public sealed partial class FunctionEmitter
 
     private void LowerFor(ForExpressionNode f)
     {
-        if (!IsKind(_typed.TypeOf(f.Collection), AeroType.Range))
-        {
-            Fail("Only ranges can be iterated so far, arrays come in sub-task 5d", f.Collection.Span);
-            return;
-        }
+        var collectionType = _typed.TypeOf(f.Collection);
 
         if (_typed.BindingOf(f.Item) is not LocalBinding { Variable: var item })
         {
@@ -326,15 +322,39 @@ public sealed partial class FunctionEmitter
             return;
         }
 
-        if (!TryLowerValue(f.Collection, out var range)) return;
+        if (!TryLowerValue(f.Collection, out var collection)) return;
 
-        var start = _builder.BuildExtractValue(range, 0, "start");
-        var stop = _builder.BuildExtractValue(range, 1, "stop");
+        LLVMTypeRef itemType;
+        LLVMValueRef start, stop;
+        Func<LLVMValueRef, LLVMValueRef> itemAt;
+
+        if (IsKind(collectionType, AeroType.Range))
+        {
+            itemType = _context.Int32Type;
+            start = _builder.BuildExtractValue(collection, 0, "start");
+            stop = _builder.BuildExtractValue(collection, 1, "stop");
+            itemAt = i => i;
+        }
+        else if (collectionType is ArrayType array)
+        {
+            if (!_types.TryLower(array.ElementType, _scope, f.Collection.Span, out itemType)) return;
+
+            var data = _builder.BuildExtractValue(collection, 0, "data");
+            var elementType = itemType;
+            start = LLVMValueRef.CreateConstInt(_context.Int32Type, 0);
+            stop = _builder.BuildExtractValue(collection, 1, "length");
+            itemAt = i => _builder.BuildLoad2(elementType, _builder.BuildGEP2(elementType, data, new[] { i }, "elem"), "item");
+        }
+        else
+        {
+            Fail($"Cannot iterate over '{collectionType}'", f.Collection.Span);
+            return;
+        }
 
         // The counter is separate so the body can change the loop variable without touching the iteration
         var counter = EntryAlloca(_context.Int32Type, "for.i");
-        var itemSlot = EntryAlloca(_context.Int32Type, f.Item.Name);
-        _locals[item] = new LocalSlot(itemSlot, _context.Int32Type);
+        var itemSlot = EntryAlloca(itemType, f.Item.Name);
+        _locals[item] = new LocalSlot(itemSlot, itemType);
         _builder.BuildStore(start, counter);
 
         var condition = AppendBlock("for.cond");
@@ -350,7 +370,7 @@ public sealed partial class FunctionEmitter
         _builder.BuildCondBr(more, body, end);
 
         _builder.PositionAtEnd(body);
-        _builder.BuildStore(current, itemSlot);
+        _builder.BuildStore(itemAt(current), itemSlot);
         _loops.Push((end, step));
         LowerStatements(f.Body.Statements);
         _loops.Pop();

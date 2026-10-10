@@ -7,7 +7,7 @@ using Luft.Utility;
 
 namespace Luft.Builder;
 
-// Literals, locals, direct calls, operators, if/match, ranges, for over ranges, strings and casts so far. The rest is sub-task 5d onwards.
+// Literals, locals, direct calls, operators, if/match, ranges, for over ranges, strings, casts and arrays so far. The rest is sub-task 5e onwards.
 public sealed partial class FunctionEmitter
 {
     // A Void call succeeds with a default value
@@ -28,6 +28,8 @@ public sealed partial class FunctionEmitter
             case BlockExpressionNode bl: return TryLowerBlockValue(bl, out value);
             case PatternTestExpressionNode p: return TryLowerPatternTest(p, out value);
             case RangeExpressionNode r: return TryLowerRange(r, out value);
+            case ArrayLiteralExpressionNode al: return TryLowerArrayLiteral(al, out value);
+            case IndexExpressionNode ix: return TryLowerIndex(ix, out value);
             case StringInterpolationExpressionNode si: return TryLowerInterpolation(si, out value);
             case ForExpressionNode f:
                 LowerFor(f);

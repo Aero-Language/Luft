@@ -247,11 +247,8 @@ public sealed partial class FunctionEmitter
     {
         value = default;
 
-        if (!TryGetLocalSlot(u.Operand, out _, out var slot))
-        {
-            Fail($"'{u.Operator.AsString()}' only works on locals and parameters so far", u.Span);
-            return false;
-        }
+        if (!TryGetAddress(u.Operand, out var address, out var slotType, out _)) return false;
+        var slot = new LocalSlot(address, slotType);
 
         var type = _typed.TypeOf(u.Operand);
         if (!IsNumeric(type))
@@ -280,7 +277,7 @@ public sealed partial class FunctionEmitter
         return true;
     }
 
-    private bool TryGetLocalSlot(ExpressionNode target, out VariableSymbol variable, out LocalSlot slot)
+    private bool TryGetLocalSlot(ExpressionNode target, out  VariableSymbol variable, out LocalSlot slot)
     {
         variable = null!;
         slot = default;
@@ -326,16 +323,13 @@ public sealed partial class FunctionEmitter
             return;
         }
 
-        if (!TryGetLocalSlot(a.Target, out var variable, out var slot))
-        {
-            Fail("Only locals and parameters can be assigned so far", a.Target.Span);
-            return;
-        }
+        if (!TryGetAddress(a.Target, out var address, out var slotType, out var targetType)) return;
+        var slot = new LocalSlot(address, slotType);
 
         if (!TryLowerValue(a.Value, out var right)) return;
 
-        var current = _builder.BuildLoad2(slot.Type, slot.Address, variable.Name);
-        if (!TryEmitBinary(plain, current, variable.Type, right, _typed.TypeOf(a.Value), a.Span, out var result)) return;
+        var current = _builder.BuildLoad2(slot.Type, slot.Address, "cur");
+        if (!TryEmitBinary(plain, current, targetType, right, _typed.TypeOf(a.Value), a.Span, out var result)) return;
 
         _builder.BuildStore(result, slot.Address);
     }

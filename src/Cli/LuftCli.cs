@@ -1,4 +1,5 @@
-﻿using Acli;
+﻿using System.Diagnostics;
+using Acli;
 using Luft.Builder;
 using Luft.Utility;
 
@@ -46,6 +47,21 @@ public static class LuftCli
     
     static void Run(Flag[] flags, string[] values)
     {
+        var builder = new AeroBuilder();
+        var exec = builder.Build(values, [], new(isExecutable: true));
         
+        if (builder.Diagnostics is { HasErrors: true })
+        {
+            PrintDiagnostics(builder.Diagnostics);
+        }
+        else
+        {
+            var info = new ProcessStartInfo
+            {
+                FileName = exec
+            };
+            using var process = Process.Start(info)!;
+            process.WaitForExit();
+        }
     }
 }

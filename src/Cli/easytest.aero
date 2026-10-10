@@ -1,6 +1,6 @@
 module EasyTest
 
-public fun DoSomething(baseValue: Int) {
-    val mult: Int = 10
-    DoSomething(baseValue * mult)
+public static fun Main() -> Int {
+    val value: Int = 10
+    return value
 }

@@ -9,7 +9,7 @@ public sealed class Linker : AeroThrower
 {
     protected override CompilerStage Stage => CompilerStage.Linker;
 
-    public bool Link(string objectPath, string outputPath, bool isLibrary, string? driverPath = null)
+    public bool Link(string objectPath, string outputPath, bool isLibrary, string? driverPath = null, IEnumerable<string>? extraInputs = null)
     {
         var driver = driverPath ?? FindOnPath("clang");
         if (driver is null)
@@ -27,6 +27,7 @@ public sealed class Linker : AeroThrower
         info.ArgumentList.Add("-fuse-ld=lld");
         if (isLibrary) info.ArgumentList.Add("-shared");
         info.ArgumentList.Add(objectPath);
+        foreach (var input in extraInputs ?? []) info.ArgumentList.Add(input); // C sources are compiled by clang on the way
         info.ArgumentList.Add("-o");
         info.ArgumentList.Add(outputPath);
 

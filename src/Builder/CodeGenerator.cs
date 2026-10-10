@@ -20,6 +20,17 @@ public sealed class CodeGenerator : AeroThrower, IDisposable
     public LLVMModuleRef Module { get; }
     public TypeLowering Types => _types;
 
+    // True when the module calls into the C runtime, which then has to be linked in
+    public bool UsesRuntime
+    {
+        get
+        {
+            for (var f = Module.FirstFunction; f.Handle != IntPtr.Zero; f = f.NextFunction)
+                if (f.Name.StartsWith("aero_")) return true;
+            return false;
+        }
+    }
+
     public CodeGenerator(string moduleName, TypeTable table)
     {
         LlvmBackend.Initialize();

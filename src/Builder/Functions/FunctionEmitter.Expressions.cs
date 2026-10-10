@@ -7,7 +7,7 @@ using Luft.Utility;
 
 namespace Luft.Builder;
 
-// Literals, locals, direct calls and primitive operators so far. The rest is sub-task 5b onwards.
+// Literals, locals, direct calls, operators, if/match, ranges, for over ranges, strings and casts so far. The rest is sub-task 5d onwards.
 public sealed partial class FunctionEmitter
 {
     // A Void call succeeds with a default value
@@ -23,6 +23,15 @@ public sealed partial class FunctionEmitter
             case CallExpressionNode c: return TryLowerCall(c, out value);
             case BinaryExpressionNode b: return TryLowerBinary(b, out value);
             case UnaryExpressionNode u: return TryLowerUnary(u, out value);
+            case IfExpressionNode i: return TryLowerIf(i, out value);
+            case MatchExpressionNode m: return TryLowerMatch(m, out value);
+            case BlockExpressionNode bl: return TryLowerBlockValue(bl, out value);
+            case PatternTestExpressionNode p: return TryLowerPatternTest(p, out value);
+            case RangeExpressionNode r: return TryLowerRange(r, out value);
+            case StringInterpolationExpressionNode si: return TryLowerInterpolation(si, out value);
+            case ForExpressionNode f:
+                LowerFor(f);
+                return true;
             default:
                 Fail($"'{expression.GetType().Name}' is not lowered yet (sub-task 5)", expression.Span);
                 return false;
@@ -58,6 +67,9 @@ public sealed partial class FunctionEmitter
                 return true;
             case (TokenType.StringLiteral, string s):
                 value = StringConstant(s);
+                return true;
+            case (TokenType.ItLiteral, _) when _itValues.Count > 0:
+                value = _itValues.Peek();
                 return true;
             case (TokenType.NullLiteral, _):
                 value = LLVMValueRef.CreateConstPointerNull(_types.Ptr);

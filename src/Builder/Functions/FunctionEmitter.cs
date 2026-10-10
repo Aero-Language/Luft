@@ -242,8 +242,8 @@ public sealed partial class FunctionEmitter : AeroThrower, IDisposable
 
         switch (statement.Expression)
         {
-            case IfExpressionNode ifExpr when !returnsValue:
-                LowerIf(ifExpr);
+            case ForExpressionNode f:
+                LowerFor(f);
                 return;
             case BlockExpressionNode block when !returnsValue:
                 LowerStatements(block.Statements);
@@ -253,45 +253,19 @@ public sealed partial class FunctionEmitter : AeroThrower, IDisposable
         // The last expression of a body is its result
         if (returnsValue)
         {
-            if (TryLowerValue(statement.Expression, out var value))
-                _builder.BuildRet(Coerce(value, _typed.TypeOf(statement.Expression), _returnType, statement.Span));
+            if (!TryLowerExpression(statement.Expression, out var value)) return;
+
+            if (value.Handle == IntPtr.Zero)
+            {
+                if (!IsTerminated()) Fail("The last expression of the function has no value", statement.Span);
+                return;
+            }
+
+            _builder.BuildRet(Coerce(value, _typed.TypeOf(statement.Expression), _returnType, statement.Span));
             return;
         }
 
         TryLowerExpression(statement.Expression, out _);
-    }
-
-    // Statement form only, an if that produces a value is lowered in sub-task 5
-    private void LowerIf(IfExpressionNode e)
-    {
-        var branches = new List<(ExpressionNode Condition, BlockExpressionNode Body)> { (e.Condition, e.ThenBody) };
-        branches.AddRange(e.ElseIfs.Select(x => (x.condition, x.body)));
-
-        var end = AppendBlock("if.end");
-
-        for (var i = 0; i < branches.Count; i++)
-        {
-            var then = AppendBlock("if.then");
-            var last = i == branches.Count - 1;
-            var next = last && e.ElseBody is null ? end : AppendBlock("if.else");
-
-            if (!TryLowerCondition(branches[i].Condition, out var test)) return;
-            _builder.BuildCondBr(test, then, next);
-
-            _builder.PositionAtEnd(then);
-            LowerStatements(branches[i].Body.Statements);
-            BranchIfOpen(end);
-
-            _builder.PositionAtEnd(next);
-        }
-
-        if (e.ElseBody is not null)
-        {
-            LowerStatements(e.ElseBody.Statements);
-            BranchIfOpen(end);
-        }
-
-        _builder.PositionAtEnd(end);
     }
 
     private bool TryLowerCondition(ExpressionNode expression, out LLVMValueRef test)

@@ -119,7 +119,20 @@ public class AeroBuilder : AeroThrower
         try
         {
             var linker = new Linker { Diagnostics = this.Diagnostics };
-            return linker.Link(objectPath, outputPath, false, settings.LinkerPath) ? outputPath : null;
+
+            var extra = new List<string>();
+            if (generator.UsesRuntime)
+            {
+                var runtime = Path.Combine(AppContext.BaseDirectory, "Runtime", "aero_runtime.c");
+                if (!File.Exists(runtime))
+                {
+                    Error($"The runtime source '{runtime}' is missing.", SourceSpan.Unknown);
+                    return null;
+                }
+                extra.Add(runtime);
+            }
+
+            return linker.Link(objectPath, outputPath, false, settings.LinkerPath, extra) ? outputPath : null;
         }
         finally
         {

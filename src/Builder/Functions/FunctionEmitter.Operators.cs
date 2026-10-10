@@ -23,11 +23,9 @@ public sealed partial class FunctionEmitter
         switch (b.Operator)
         {
             case Operator.CastSymbol:
-                Fail("Casts are lowered in sub-task 5c", b.Span);
-                return false;
+                return TryLowerCast(b, out value);
             case Operator.And or Operator.Or or Operator.LogicalAnd or Operator.LogicalOr:
-                Fail("Short-circuit logic is lowered in sub-task 5b", b.Span);
-                return false;
+                return TryLowerShortCircuit(b, out value);
         }
 
         if (_typed.BindingOf(b) is OperatorBinding)
@@ -59,6 +57,10 @@ public sealed partial class FunctionEmitter
             case Operator.Equality or Operator.Inequality
                 or Operator.LessThan or Operator.GreaterThan or Operator.LessThanEqual or Operator.GreaterThanEqual:
                 return TryEmitComparison(op, left, leftType, right, rightType, span, out value);
+
+            case Operator.LogicalXor when IsKind(leftType, AeroType.Bool):
+                value = _builder.BuildXor(left, right, "xor");
+                return true;
 
             case Operator.BitwiseAnd or Operator.BitwiseOr or Operator.BitwiseXor or Operator.LeftShift or Operator.RightShift:
                 if (!IsKind(leftType, AeroType.Int) && !IsByte(leftType))
@@ -143,6 +145,12 @@ public sealed partial class FunctionEmitter
         {
             Fail("Comparing nullable values is not lowered yet", span);
             return false;
+        }
+
+        if (op is Operator.Equality or Operator.Inequality && IsKind(leftType, AeroType.String) && IsKind(rightType, AeroType.String))
+        {
+            value = BuildStringEquality(op, left, right);
+            return true;
         }
 
         LLVMValueRef test;

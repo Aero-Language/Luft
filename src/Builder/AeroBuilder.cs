@@ -106,7 +106,7 @@ public class AeroBuilder : AeroThrower
 
     private string? BuildExecutable(TypeTable table, List<FileNode> files, List<ModuleDeclarationNode> libs, AeroBuilderSettings settings, string outputPath)
     {
-        using var generator = new CodeGenerator(Path.GetFileNameWithoutExtension(outputPath)) { Diagnostics = this.Diagnostics };
+        using var generator = new CodeGenerator(Path.GetFileNameWithoutExtension(outputPath), table) { Diagnostics = this.Diagnostics };
         if (!generator.Generate()) return null;
 
         var objectPath = outputPath + (OperatingSystem.IsWindows() ? ".obj" : ".o");

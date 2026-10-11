@@ -39,9 +39,18 @@ public sealed partial class FunctionEmitter
             return false;
         }
 
+        // Static, const and module level fields are globals, so there is no object to start from
+        if (_members.Fields.TryGetValue(field, out var global))
+        {
+            address = global.Address;
+            type = global.Type;
+            aeroType = global.AeroType;
+            return true;
+        }
+
         if (IsStaticField(field))
         {
-            Fail($"The static field '{field.Name}' is lowered in sub-task 6d", expression.Span);
+            Fail($"The static field '{field.Name}' has no storage", expression.Span);
             return false;
         }
 

@@ -1,5 +1,7 @@
 using LLVMSharp.Interop;
 using Luft.Ast;
+using Luft.Ast.Nodes;
+using Luft.Lexer;
 using Luft.TypeChecker;
 using Luft.TypeChecker.Symbols;
 using Luft.Utility;
@@ -311,9 +313,25 @@ public sealed class TypeLowering : AeroThrower
         return members.OrderBy(m => m.Span.Start);
     }
 
-    // TODO: accessors that use 'it' need storage too, that needs a scan of the accessor bodies
-    private static bool NeedsBacking(PropertySymbol p)
-        => p.Initializer is not null || p.Getter is { Body: null } || p.Setter is { Body: null };
+    // A property needs storage when it is automatic, has an initializer or its accessors use 'it'
+    public bool NeedsBacking(PropertySymbol p)
+        => p.Initializer is not null || p.Getter is { Body: null } || p.Setter is { Body: null } || UsesIt(p);
+
+    // 'it' inside an accessor body is the backing value, found through the typed 'it' literals that lie inside the body
+    private bool UsesIt(PropertySymbol p)
+    {
+        foreach (var body in new[] { p.Getter?.Body, p.Setter?.Body })
+        {
+            if (body is null) continue;
+
+            foreach (var node in _table.Typed.Types.Keys)
+                if (node is LiteralExpressionNode { LiteralType: TokenType.ItLiteral } literal
+                    && literal.Span.FilePath == body.Span.FilePath
+                    && body.Span.Contains(literal.Span.Start))
+                    return true;
+        }
+        return false;
+    }
 
     // Only the first listed type can be a base, the rest are traits
     private bool TryBase(TypeSymbol symbol, SourceSpan span, out TypeSymbol? baseSymbol)

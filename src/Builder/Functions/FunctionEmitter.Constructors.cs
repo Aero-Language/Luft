@@ -65,16 +65,23 @@ public sealed partial class FunctionEmitter
             var own = _types.LayoutOf(type, type.Span);
             if (own is null) return false;
 
-            foreach (var field in type.Scope.Fields.Values.SelectMany(l => l).OrderBy(f => f.Span.Start))
+            // Fields and properties with an initializer, in declaration order; a property stores straight into its backing value
+            var members = type.Scope.Fields.Values.SelectMany(l => l)
+                .Where(f => f.Initializer is not null && !IsStaticField(f) && !(type == key.Type && argumentFields.Contains(f.Name)))
+                .Select(f => (Start: f.Span.Start, Name: f.Name, Initializer: f.Initializer!, Span: f.Span))
+                .Concat(type.Scope.Properties.Values.SelectMany(l => l)
+                    .Where(p => p.Initializer is not null && !p.Declaration.MemberMods.HasFlag(MemberMod.Static))
+                    .Select(p => (Start: p.Span.Start, Name: $"<backing>{p.Name}", Initializer: p.Initializer!, Span: p.Span)))
+                .OrderBy(m => m.Start);
+
+            foreach (var member in members)
             {
-                if (field.Initializer is null || IsStaticField(field)) continue;
-                if (type == key.Type && argumentFields.Contains(field.Name)) continue;
-                if (own.Find(field.Name) is not { } slot) continue; // a base layout is a prefix, so its slot index fits the derived struct too
+                if (own.Find(member.Name) is not { } slot) continue; // a base layout is a prefix, so its slot index fits the derived struct too
 
-                if (!TryLowerValue(field.Initializer, out var value)) return false;
+                if (!TryLowerValue(member.Initializer, out var value)) return false;
 
-                var address = _builder.BuildStructGEP2(layout.StructType, _self, (uint)slot.Index, field.Name);
-                _builder.BuildStore(Coerce(value, _typed.TypeOf(field.Initializer), slot.Type, field.Span), address);
+                var address = _builder.BuildStructGEP2(layout.StructType, _self, (uint)slot.Index, member.Name);
+                _builder.BuildStore(Coerce(value, _typed.TypeOf(member.Initializer), slot.Type, member.Span), address);
             }
         }
         return true;

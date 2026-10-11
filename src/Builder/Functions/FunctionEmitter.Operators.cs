@@ -178,7 +178,8 @@ public sealed partial class FunctionEmitter
         {
             var isEquality = op is Operator.Equality or Operator.Inequality;
             var integral = IsKind(leftType, AeroType.Int) || IsByte(leftType);
-            var comparable = integral || (isEquality && (IsKind(leftType, AeroType.Bool) || IsKind(leftType, AeroType.Char)));
+            var isEnum = leftType is ScalarType && _types.SymbolOf(leftType, _scope) is EnumSymbol; // an enum value is its ordinal
+            var comparable = integral || (isEquality && (IsKind(leftType, AeroType.Bool) || IsKind(leftType, AeroType.Char) || isEnum));
 
             if (!comparable || leftType.Name != rightType.Name)
             {
@@ -320,6 +321,12 @@ public sealed partial class FunctionEmitter
         if (_typed.BindingOf(a) is OperatorBinding)
         {
             Fail("Overloaded operators are lowered in sub-task 5f", a.Span);
+            return;
+        }
+
+        if (IsPropertyAccess(a.Target))
+        {
+            LowerPropertyCompound(a, plain);
             return;
         }
 

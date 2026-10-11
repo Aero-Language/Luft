@@ -1,5 +1,6 @@
 using LLVMSharp.Interop;
 using Luft.Ast.Nodes;
+using Luft.Lexer;
 using Luft.TypeChecker;
 using Luft.Utility;
 
@@ -107,8 +108,18 @@ public sealed partial class FunctionEmitter
         if (target is IndexExpressionNode index) return TryLowerElementAddress(index, out address, out type, out aeroType);
 
         if (IsFieldAccess(target)) return TryGetFieldAddress(target, true, out address, out type, out aeroType);
+        if (IsPropertyAccess(target)) return TryGetPropertyAddress(target, out address, out type, out aeroType);
 
-        Fail("Only locals, parameters, array elements and instance fields can be assigned so far", target.Span);
+        // Inside an accessor 'it' is the backing value
+        if (target is LiteralExpressionNode { LiteralType: TokenType.ItLiteral } && _itValues.Count == 0 && _backingType.Handle != IntPtr.Zero)
+        {
+            address = _backing;
+            type = _backingType;
+            aeroType = _backingAeroType;
+            return true;
+        }
+
+        Fail("Only locals, parameters, array elements, fields and properties can be assigned so far", target.Span);
         return false;
     }
 }

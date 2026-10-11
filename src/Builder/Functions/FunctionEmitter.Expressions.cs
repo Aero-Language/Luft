@@ -3,6 +3,7 @@ using LLVMSharp.Interop;
 using Luft.Ast.Nodes;
 using Luft.Lexer;
 using Luft.TypeChecker;
+using Luft.TypeChecker.Symbols;
 using Luft.Utility;
 
 namespace Luft.Builder;
@@ -24,6 +25,13 @@ public sealed partial class FunctionEmitter
                 return TryLowerFunctionReference(m, f, out value);
             case MemberAccessExpressionNode m when _typed.BindingOf(m) is FieldBinding:
                 return TryLowerField(m, out value);
+            case MemberAccessExpressionNode m when _typed.BindingOf(m) is PropertyBinding:
+                return TryLowerProperty(m, out value);
+            case MemberAccessExpressionNode m when _typed.BindingOf(m) is EnumMemberBinding { Enum: var enumeration, Name: var memberName }:
+                return TryLowerEnumMember(m, enumeration, memberName, out value);
+            case MemberAccessExpressionNode m when _typed.BindingOf(m) is EnumParamBinding:
+                Fail("The parameters of enum members are not lowered yet", m.Span);
+                return false;
             case RefExpressionNode r:
                 Fail("'ref' can only be used as a call argument", r.Span);
                 return false;
@@ -80,6 +88,9 @@ public sealed partial class FunctionEmitter
             case (TokenType.ItLiteral, _) when _itValues.Count > 0:
                 value = _itValues.Peek();
                 return true;
+            case (TokenType.ItLiteral, _) when _backingType.Handle != IntPtr.Zero: // inside an accessor 'it' is the backing value
+                value = _builder.BuildLoad2(_backingType, _backing, "it");
+                return true;
             case (TokenType.NullLiteral, _):
                 value = LLVMValueRef.CreateConstPointerNull(_types.Ptr);
                 return true;
@@ -89,6 +100,22 @@ public sealed partial class FunctionEmitter
                 Fail($"The literal '{l.LiteralType}' is not lowered yet", l.Span);
                 return false;
         }
+    }
+
+    // An enum value is the ordinal of its member, values given to members are looked up separately
+    private bool TryLowerEnumMember(ExpressionNode node, EnumSymbol enumeration, string name, out LLVMValueRef value)
+    {
+        value = default;
+
+        var ordinal = enumeration.Members.FindIndex(m => m.Name == name);
+        if (ordinal < 0)
+        {
+            Fail($"'{enumeration.Name}' has no member '{name}'", node.Span);
+            return false;
+        }
+
+        value = LLVMValueRef.CreateConstInt(_context.Int32Type, (ulong)ordinal);
+        return true;
     }
 
     // A String is { ptr to UTF-16 data, length in UTF-16 units }
@@ -142,6 +169,7 @@ public sealed partial class FunctionEmitter
         }
 
         if (_typed.BindingOf(id) is FieldBinding) return TryLowerField(id, out value);
+        if (_typed.BindingOf(id) is PropertyBinding) return TryLowerProperty(id, out value);
         if (_typed.BindingOf(id) is FunctionBinding { Function: var function }) return TryLowerFunctionReference(id, function, out value);
 
         Fail($"'{id.Name}' cannot be used as a value yet, only locals, parameters, fields and functions can", id.Span);

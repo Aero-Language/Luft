@@ -80,8 +80,10 @@ public sealed partial class FunctionEmitter
                 return _self.Handle != IntPtr.Zero;
             case IdentifierExpressionNode when _typed.BindingOf(expression) is LocalBinding { Variable: var variable }:
                 return _locals.ContainsKey(variable);
-            case IdentifierExpressionNode when _typed.BindingOf(expression) is FieldBinding:
-                return _self.Handle != IntPtr.Zero;
+            case IdentifierExpressionNode when _typed.BindingOf(expression) is FieldBinding { Field: var named }:
+                return _members.Fields.ContainsKey(named) || _self.Handle != IntPtr.Zero;
+            case MemberAccessExpressionNode member when _typed.BindingOf(member) is FieldBinding { Field: var accessed } && _members.Fields.ContainsKey(accessed):
+                return true;
             case MemberAccessExpressionNode member when _typed.BindingOf(member) is FieldBinding:
             {
                 var targetType = _typed.TypeOf(member.Target);

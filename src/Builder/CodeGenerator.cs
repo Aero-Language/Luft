@@ -1,5 +1,6 @@
 using LLVMSharp.Interop;
 using Luft.Ast;
+using Luft.Ast.Nodes;
 using Luft.TypeChecker;
 using Luft.TypeChecker.Symbols;
 using Luft.Utility;
@@ -15,6 +16,9 @@ public sealed class CodeGenerator : AeroThrower, IDisposable
     private readonly TypeTable _table;
     private readonly Dictionary<FunctionSymbol, DeclaredFunction> _functions = new();
     private readonly Dictionary<ConstructorKey, DeclaredFunction> _constructors = new();
+    private readonly MemberTable _members = new();
+    private LLVMValueRef _staticInit; // unset when there is nothing to initialize
+    private ModuleSymbol? _declaringModule;
     private readonly Dictionary<string, LLVMValueRef> _strings = new();
     private TypeLowering _types = null!;
 
@@ -66,6 +70,21 @@ public sealed class CodeGenerator : AeroThrower, IDisposable
             emitter.EmitConstructor(key, declared);
             failed |= emitter.HasErrors;
         }
+        foreach (var (key, declared) in _members.Accessors)
+        {
+            using var emitter = CreateEmitter();
+            emitter.EmitAccessor(key, declared);
+            failed |= emitter.HasErrors;
+        }
+        if (_members.Initializers.Count > 0)
+        {
+            _staticInit = Module.AddFunction("aero.init", LLVMTypeRef.CreateFunction(_context.VoidType, [], false));
+            _staticInit.Linkage = LLVMLinkage.LLVMInternalLinkage;
+
+            using var emitter = CreateEmitter();
+            emitter.EmitStaticInitializers(_staticInit, _members.Initializers);
+            failed |= emitter.HasErrors;
+        }
         if (failed || _types.HasErrors) return false;
 
         if (!EmitEntryPoint()) return false;
@@ -82,7 +101,7 @@ public sealed class CodeGenerator : AeroThrower, IDisposable
         return true;
     }
 
-    private FunctionEmitter CreateEmitter() => new(_context, Module, _types, _table.Typed, _functions, _constructors, _strings)
+    private FunctionEmitter CreateEmitter() => new(_context, Module, _types, _table.Typed, _functions, _constructors, _members, _strings)
     {
         Diagnostics = Diagnostics,
         OnDiagnostic = OnDiagnostic,
@@ -118,7 +137,11 @@ public sealed class CodeGenerator : AeroThrower, IDisposable
     {
         var symbols = new HashSet<string> { "main" };
 
-        foreach (var module in _table.Modules.Values) DeclareScope(module.Scope, null, "", true, symbols);
+        foreach (var module in _table.Modules.Values)
+        {
+            _declaringModule = module;
+            DeclareScope(module.Scope, null, "", true, symbols);
+        }
     }
 
     // The functions of one scope, then the methods of every non generic type in it. `path` is the dotted type path, empty at module level.
@@ -151,6 +174,9 @@ public sealed class CodeGenerator : AeroThrower, IDisposable
             _functions[f] = new DeclaredFunction(value, type.Value, scope, owner, hasSelf);
         }
 
+        DeclareFields(scope, owner, path, exported, symbols);
+        DeclareProperties(scope, owner, path, exported, symbols);
+
         foreach (var symbol in scope.Types.Values.SelectMany(l => l))
         {
             if (symbol is not (ClassSymbol or StructSymbol or RecordSymbol) || symbol.GenericParameters.Count > 0) continue;
@@ -161,6 +187,111 @@ public sealed class CodeGenerator : AeroThrower, IDisposable
             DeclareConstructors(symbol, nested, nestedExported, symbols);
             DeclareScope(symbol.Scope, symbol, nested, nestedExported, symbols);
         }
+    }
+
+    // Static, const and module level fields live in globals, their initial values are stored at startup
+    private void DeclareFields(TypeScope scope, TypeSymbol? owner, string path, bool exported, HashSet<string> symbols)
+    {
+        foreach (var field in scope.Fields.Values.SelectMany(l => l))
+        {
+            var isGlobal = owner is null || field.Declaration.MemberMods.HasFlag(MemberMod.Static) || field.VarKind == VariableKind.Const;
+            if (!isGlobal) continue;
+
+            var type = field.Type;
+            if (type.IsAuto && field.Initializer is not null && _table.Typed.TypeOf(field.Initializer) is { } inferred) type = inferred;
+            if (!_types.TryLower(type, scope, field.Span, out var lowered)) continue;
+
+            var external = field.Access == AccessMod.Public && exported;
+            var name = GlobalName(field.Name, path, external);
+            if (!symbols.Add(name))
+            {
+                Error($"The symbol '{name}' is defined more than once.", field.Span);
+                continue;
+            }
+
+            var variable = AddGlobal(name, lowered, type, external);
+            _members.Fields[field] = variable;
+
+            if (field.Initializer is not null) _members.Initializers.Add(new StaticInitializer(variable, field.Initializer, scope, field.Span));
+        }
+    }
+
+    // Instance properties are laid out with their type, static and module level ones get a global backing value and accessor functions
+    private void DeclareProperties(TypeScope scope, TypeSymbol? owner, string path, bool exported, HashSet<string> symbols)
+    {
+        foreach (var p in scope.Properties.Values.SelectMany(l => l))
+        {
+            var isGlobal = owner is null || p.Declaration.MemberMods.HasFlag(MemberMod.Static);
+            var external = p.Access == AccessMod.Public && exported;
+
+            if (isGlobal)
+            {
+                _members.GlobalProperties.Add(p);
+
+                if (_types.NeedsBacking(p) && _types.TryLower(p.Type, scope, p.Span, out var lowered))
+                {
+                    var name = GlobalName($"<backing>{p.Name}", path, false);
+                    if (!symbols.Add(name))
+                    {
+                        Error($"The symbol '{name}' is defined more than once.", p.Span);
+                        continue;
+                    }
+
+                    var variable = AddGlobal(name, lowered, p.Type, false);
+                    _members.Backing[p] = variable;
+
+                    if (p.Initializer is not null) _members.Initializers.Add(new StaticInitializer(variable, p.Initializer, scope, p.Span));
+                }
+            }
+
+            DeclareAccessor(p, false, scope, owner, path, !isGlobal, external, symbols);
+            DeclareAccessor(p, true, scope, owner, path, !isGlobal, external, symbols);
+        }
+    }
+
+    // Only accessors with a body are functions, an automatic one reads or writes the backing value directly
+    private void DeclareAccessor(PropertySymbol p, bool isSetter, TypeScope scope, TypeSymbol? owner, string path, bool hasSelf, bool external, HashSet<string> symbols)
+    {
+        var accessor = isSetter ? p.Setter : p.Getter;
+        if (accessor?.Body is null) return;
+
+        var type = _types.LowerFunction(isSetter ? AeroType.Void : p.Type, isSetter ? new[] { p.Type } : Array.Empty<AeroType>(), scope, p.Span);
+        if (type is null) return;
+
+        // self comes first, as for every method
+        if (hasSelf) type = LLVMTypeRef.CreateFunction(type.Value.ReturnType, new[] { _types.Ptr }.Concat(type.Value.ParamTypes).ToArray(), false);
+
+        var name = GlobalName($"{(isSetter ? "set" : "get")}_{p.Name}", path, external);
+        if (!symbols.Add(name))
+        {
+            Error($"The symbol '{name}' is defined more than once.", p.Span);
+            return;
+        }
+
+        var value = Module.AddFunction(name, type.Value);
+        if (p.Access == AccessMod.Private) value.Linkage = LLVMLinkage.LLVMInternalLinkage;
+        else if (!external) value.Visibility = LLVMVisibility.LLVMHiddenVisibility;
+
+        _members.Accessors[new AccessorKey(p, isSetter)] = new DeclaredFunction(value, type.Value, scope, owner, hasSelf);
+    }
+
+    // Module_Type_Name when exported, a dotted name otherwise; the declaring module is the one DeclareFunctions is walking
+    private string GlobalName(string name, string path, bool external)
+    {
+        var module = _declaringModule?.ModulePath ?? "";
+        if (external)
+            return (module.Length == 0 ? "" : module.Replace('.', '_') + "_") + (path.Length == 0 ? "" : path.Replace('.', '_') + "_") + name;
+
+        return (module.Length == 0 ? "" : module + ".") + (path.Length == 0 ? "" : path + ".") + name;
+    }
+
+    // Zero until the startup initializer stores the real value
+    private GlobalVariable AddGlobal(string name, LLVMTypeRef type, AeroType aeroType, bool external)
+    {
+        var global = Module.AddGlobal(type, name);
+        global.Initializer = LLVMValueRef.CreateConstNull(type);
+        if (!external) global.Linkage = LLVMLinkage.LLVMInternalLinkage;
+        return new GlobalVariable(global, type, aeroType);
     }
 
     // One init function per constructor: it takes the allocated object (self) first and fills it in, the caller allocates
@@ -245,6 +376,10 @@ public sealed class CodeGenerator : AeroThrower, IDisposable
         var main = Module.AddFunction("main", mainType);
 
         _builder.PositionAtEnd(_context.AppendBasicBlock(main, "entry"));
+
+        // Statics are ready before any user code runs
+        if (_staticInit.Handle != IntPtr.Zero)
+            _builder.BuildCall2(LLVMTypeRef.CreateFunction(_context.VoidType, [], false), _staticInit, [], "");
 
         var exitCode = LLVMValueRef.CreateConstInt(_context.Int32Type, 0);
         if (main0 is not null)

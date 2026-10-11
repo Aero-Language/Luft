@@ -23,6 +23,7 @@ public sealed partial class FunctionEmitter : AeroThrower, IDisposable
     private readonly TypedInfo _typed;
     private readonly IReadOnlyDictionary<FunctionSymbol, DeclaredFunction> _functions;
     private readonly IReadOnlyDictionary<ConstructorKey, DeclaredFunction> _constructors;
+    private readonly MemberTable _members;
     private readonly Dictionary<string, LLVMValueRef> _strings;
 
     private readonly Dictionary<VariableSymbol, LocalSlot> _locals = new(ReferenceEqualityComparer.Instance);
@@ -31,6 +32,9 @@ public sealed partial class FunctionEmitter : AeroThrower, IDisposable
     private LLVMValueRef _function;
     private LLVMValueRef _self; // the self pointer, unset outside instance methods
     private TypeSymbol? _selfOwner;
+    private LLVMValueRef _backing; // inside an accessor, where 'it' lives; unset elsewhere
+    private LLVMTypeRef _backingType;
+    private AeroType _backingAeroType = AeroType.Error;
     private LLVMBasicBlockRef _entry;
     private TypeScope _scope = null!;
     private AeroType _returnType = AeroType.Void;
@@ -39,7 +43,7 @@ public sealed partial class FunctionEmitter : AeroThrower, IDisposable
 
     public FunctionEmitter(LLVMContextRef context, LLVMModuleRef module, TypeLowering types, TypedInfo typed,
         IReadOnlyDictionary<FunctionSymbol, DeclaredFunction> functions, IReadOnlyDictionary<ConstructorKey, DeclaredFunction> constructors,
-        Dictionary<string, LLVMValueRef> strings)
+        MemberTable members, Dictionary<string, LLVMValueRef> strings)
     {
         _context = context;
         _module = module;
@@ -47,6 +51,7 @@ public sealed partial class FunctionEmitter : AeroThrower, IDisposable
         _typed = typed;
         _functions = functions;
         _constructors = constructors;
+        _members = members;
         _strings = strings;
         _builder = context.CreateBuilder();
     }
@@ -188,6 +193,12 @@ public sealed partial class FunctionEmitter : AeroThrower, IDisposable
         if (a.Operator != Operator.Assign)
         {
             LowerCompoundAssignment(a);
+            return;
+        }
+
+        if (IsPropertyAccess(a.Target))
+        {
+            LowerPropertyAssignment(a);
             return;
         }
 

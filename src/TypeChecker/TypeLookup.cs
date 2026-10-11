@@ -171,6 +171,10 @@ public class TypeLookup : AstVisitor
     {
         CurrentScope.Constructors.Add(new ConstructorSymbol(node.AccessMod, node));
     }
+    protected override void VisitDestructor(DestructorDeclarationNode node)
+    {
+        CurrentScope.Destructor = new DestructorSymbol(node);
+    }
 
     #endregion
     

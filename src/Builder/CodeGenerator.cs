@@ -19,6 +19,7 @@ public sealed class CodeGenerator : AeroThrower, IDisposable
     private readonly MemberTable _members = new();
     private LLVMValueRef _staticInit; // unset when there is nothing to initialize
     private ModuleSymbol? _declaringModule;
+    private readonly List<(ClassSymbol Type, string Path, ModuleSymbol Module)> _classes = new();
     private readonly Dictionary<string, LLVMValueRef> _strings = new();
     private TypeLowering _types = null!;
 
@@ -57,6 +58,8 @@ public sealed class CodeGenerator : AeroThrower, IDisposable
         DeclareFunctions();
         if (_types.HasErrors) return false;
 
+        DeclareVTables();
+
         var failed = false;
         foreach (var (symbol, declared) in _functions)
         {
@@ -74,6 +77,12 @@ public sealed class CodeGenerator : AeroThrower, IDisposable
         {
             using var emitter = CreateEmitter();
             emitter.EmitAccessor(key, declared);
+            failed |= emitter.HasErrors;
+        }
+        foreach (var (type, declared) in _members.Destroyers)
+        {
+            using var emitter = CreateEmitter();
+            emitter.EmitDestroyer((ClassSymbol)type, declared);
             failed |= emitter.HasErrors;
         }
         if (_members.Initializers.Count > 0)
@@ -184,10 +193,48 @@ public sealed class CodeGenerator : AeroThrower, IDisposable
             var nested = path.Length == 0 ? symbol.Name : $"{path}.{symbol.Name}";
             var nestedExported = exported && symbol.Access == AccessMod.Public;
 
+            if (symbol is ClassSymbol classSymbol) _classes.Add((classSymbol, nested, _declaringModule!));
+
             DeclareConstructors(symbol, nested, nestedExported, symbols);
             DeclareScope(symbol.Scope, symbol, nested, nestedExported, symbols);
         }
     }
+
+    // Every class gets a destroy function (its destructor, then its base class's) and a vtable: that function followed by one entry per virtual slot
+    private void DeclareVTables()
+    {
+        var destroyType = LLVMTypeRef.CreateFunction(_context.VoidType, [_types.Ptr], false);
+
+        foreach (var (type, path, module) in _classes)
+        {
+            var destroy = Module.AddFunction($"{QualifiedName(module, path)}.<destroy>", destroyType);
+            destroy.Linkage = LLVMLinkage.LLVMInternalLinkage;
+
+            _members.Destroyers[type] = new DeclaredFunction(destroy, destroyType, type.Scope, type, true);
+        }
+
+        foreach (var (type, path, module) in _classes)
+        {
+            var entries = new List<LLVMValueRef> { _members.Destroyers[type].Value };
+
+            // A slot without an implementation (abstract) stays null
+            foreach (var slot in VirtualTables.Of(type, _types, _members.VirtualSlots))
+                entries.Add(slot.Implementation.Body is not null && _functions.TryGetValue(slot.Implementation, out var implementation)
+                    ? implementation.Value
+                    : LLVMValueRef.CreateConstPointerNull(_types.Ptr));
+
+            var array = LLVMValueRef.CreateConstArray(_types.Ptr, entries.ToArray());
+            var table = Module.AddGlobal(array.TypeOf, $"{QualifiedName(module, path)}.<vtable>");
+            table.Initializer = array;
+            table.IsGlobalConstant = true;
+            table.Linkage = LLVMLinkage.LLVMInternalLinkage;
+
+            _members.VTables[type] = table;
+        }
+    }
+
+    private static string QualifiedName(ModuleSymbol module, string path)
+        => (module.ModulePath.Length == 0 ? "" : module.ModulePath + ".") + path;
 
     // Static, const and module level fields live in globals, their initial values are stored at startup
     private void DeclareFields(TypeScope scope, TypeSymbol? owner, string path, bool exported, HashSet<string> symbols)

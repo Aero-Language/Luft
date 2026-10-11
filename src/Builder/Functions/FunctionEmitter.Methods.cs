@@ -10,6 +10,14 @@ namespace Luft.Builder;
 // Instance methods take 'self' as a pointer first: the object for classes, the value's address for structs and records
 public sealed partial class FunctionEmitter
 {
+    // The object's first slot points at its vtable, whose entries are the destroy function followed by the virtual methods
+    private LLVMValueRef LoadVirtualFunction(LLVMValueRef receiver, int slot)
+    {
+        var table = _builder.BuildLoad2(_types.Ptr, receiver, "vtable");
+        var entry = _builder.BuildGEP2(_types.Ptr, table, new[] { LLVMValueRef.CreateConstInt(_context.Int32Type, (ulong)slot) }, "slot");
+        return _builder.BuildLoad2(_types.Ptr, entry, "virtual");
+    }
+
     // 'self' as a value: the object pointer for a class, a copy of the value for a struct
     private bool TryLowerSelf(SourceSpan span, out LLVMValueRef value)
     {

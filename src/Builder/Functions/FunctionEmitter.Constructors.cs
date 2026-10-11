@@ -102,6 +102,27 @@ public sealed partial class FunctionEmitter
         }
     }
 
+    // Runs the destructor body, then the destroy function of the base class. Releasing the fields follows with the runtime work.
+    public void EmitDestroyer(ClassSymbol type, DeclaredFunction declared)
+    {
+        _function = declared.Value;
+        _scope = declared.Scope;
+        _returnType = AeroType.Void;
+        _self = _function.GetParam(0);
+        _self.Name = "self";
+        _selfOwner = type;
+
+        _entry = _context.AppendBasicBlock(_function, "entry");
+        _builder.PositionAtEnd(_entry);
+
+        if (type.Scope.Destructor is { Body: { } body }) LowerStatements(body.Statements);
+
+        if (!IsTerminated() && _types.BaseOf(type) is { } baseType && _members.Destroyers.TryGetValue(baseType, out var baseDestroy))
+            _builder.BuildCall2(baseDestroy.Type, baseDestroy.Value, [_self], "");
+
+        if (!IsTerminated()) _builder.BuildRetVoid();
+    }
+
     private bool TryLowerConstructorCall(CallExpressionNode call, ConstructorBinding binding, out LLVMValueRef value)
     {
         value = default;
@@ -120,7 +141,7 @@ public sealed partial class FunctionEmitter
         var parameters = ConstructorShapes.Of(type, layout).First(s => s.Key == key).Parameters;
 
         LLVMValueRef pointer;
-        if (type is ClassSymbol) pointer = AllocateObject(layout);
+        if (type is ClassSymbol) pointer = AllocateObject(type, layout);
         else
         {
             pointer = EntryAlloca(layout.StructType, "obj");
@@ -141,10 +162,16 @@ public sealed partial class FunctionEmitter
         return true;
     }
 
-    // Zeroed memory with the reference count set to 1, the vtable slot follows with inheritance in sub-task 6e
-    private LLVMValueRef AllocateObject(TypeLayout layout)
+    // Zeroed memory with the vtable of the class and the reference count set to 1
+    private LLVMValueRef AllocateObject(TypeSymbol type, TypeLayout layout)
     {
         var pointer = CallRuntime("aero_alloc", _types.Ptr, layout.StructType.SizeOf);
+
+        if (_members.VTables.TryGetValue(type, out var vtable))
+        {
+            var slot = _builder.BuildStructGEP2(layout.StructType, pointer, (uint)TypeLowering.VTableSlot, "vtable");
+            _builder.BuildStore(vtable, slot);
+        }
 
         var count = _builder.BuildStructGEP2(layout.StructType, pointer, (uint)TypeLowering.RefCountSlot, "refs");
         _builder.BuildStore(LLVMValueRef.CreateConstInt(_context.Int32Type, 1), count);

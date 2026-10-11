@@ -17,6 +17,7 @@ public sealed class TypeScope(TypeScope? containing)
     // Explicit `constructor` declarations, plus the inline `Type(var X: Int)` form if present
     public List<ConstructorSymbol> Constructors { get; } = [];
     public PrimaryConstructorDeclarationNode? PrimaryConstructor { get; set; }
+    public DestructorSymbol? Destructor { get; set; }
     
     // ToDo: Extensions should be checked if their signature is already a member of the target
     public Dictionary<string, List<FunctionSymbol>> ExtensionFunctions { get; } = new();

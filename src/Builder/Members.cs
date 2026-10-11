@@ -1,4 +1,5 @@
 using LLVMSharp.Interop;
+using Luft.Ast;
 using Luft.Ast.Nodes;
 using Luft.TypeChecker;
 using Luft.TypeChecker.Symbols;
@@ -25,4 +26,48 @@ public sealed class MemberTable
 
     public Dictionary<AccessorKey, DeclaredFunction> Accessors { get; } = new();
     public List<StaticInitializer> Initializers { get; } = [];
+
+    // Slot of every virtual method in its class's vtable (slot 0 is the destructor)
+    public Dictionary<FunctionSymbol, int> VirtualSlots { get; } = new();
+
+    // Per class: the vtable stored in each new object and the function that runs its destructor and its bases'
+    public Dictionary<TypeSymbol, LLVMValueRef> VTables { get; } = new();
+    public Dictionary<TypeSymbol, DeclaredFunction> Destroyers { get; } = new();
+}
+
+public sealed record VirtualSlot(string Key, FunctionSymbol Implementation);
+
+public static class VirtualTables
+{
+    public static string KeyOf(FunctionSymbol function) => $"{function.Name}({string.Join(",", function.Parameters.Select(p => p.Type))})";
+
+    private static bool IsVirtual(FunctionSymbol function)
+        => function.InheritanceMod is InheritanceMod.Virtual or InheritanceMod.Abstract or InheritanceMod.Implements or InheritanceMod.Sealed
+           && !function.MemberMods.HasFlag(MemberMod.Static)
+           && function.GenericParameters.Count == 0;
+
+    // The inherited slots come first and stay in place, an override replaces its slot's implementation, a new virtual or abstract method appends one.
+    // `index` receives the vtable position (slot + 1) of every function that takes part.
+    public static List<VirtualSlot> Of(ClassSymbol type, TypeLowering types, Dictionary<FunctionSymbol, int> index)
+    {
+        var slots = types.BaseOf(type) is ClassSymbol baseClass ? Of(baseClass, types, index) : new List<VirtualSlot>();
+
+        foreach (var function in type.Scope.Functions.Values.SelectMany(l => l).OrderBy(f => f.Span.Start).Where(IsVirtual))
+        {
+            var key = KeyOf(function);
+            var at = slots.FindIndex(s => s.Key == key);
+
+            if (at >= 0) slots[at] = slots[at] with { Implementation = function };
+            else if (function.InheritanceMod is InheritanceMod.Virtual or InheritanceMod.Abstract)
+            {
+                slots.Add(new VirtualSlot(key, function));
+                at = slots.Count - 1;
+            }
+            else continue; // an override without anything to override, the checker reports that
+
+            index[function] = at + 1;
+        }
+
+        return slots;
+    }
 }

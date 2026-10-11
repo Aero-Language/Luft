@@ -207,9 +207,10 @@ public sealed partial class FunctionEmitter
         var parameters = function.Parameters;
         var arguments = new List<LLVMValueRef>();
 
+        LLVMValueRef receiver = default;
         if (declared.HasSelf)
         {
-            if (!TryLowerReceiver(call, declared.Owner!, out var receiver)) return false;
+            if (!TryLowerReceiver(call, declared.Owner!, out receiver)) return false;
             arguments.Add(receiver);
         }
 
@@ -222,8 +223,13 @@ public sealed partial class FunctionEmitter
             arguments.Add(argument);
         }
 
+        // A virtual method on a class goes through the vtable of the object it is called on
+        var callee = declared.Value;
+        if (declared.Owner is ClassSymbol && _members.VirtualSlots.TryGetValue(function, out var slot))
+            callee = LoadVirtualFunction(receiver, slot);
+
         var isVoid = function.ReturnType == AeroType.Void;
-        var result = _builder.BuildCall2(declared.Type, declared.Value, arguments.ToArray(), isVoid ? "" : "call");
+        var result = _builder.BuildCall2(declared.Type, callee, arguments.ToArray(), isVoid ? "" : "call");
         if (!isVoid) value = result;
         return true;
     }

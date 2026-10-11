@@ -78,6 +78,10 @@ public class BodyResolver : AeroThrower
         foreach (var operators in scope.Operators.Values) CheckOperators(operators, scope);
         foreach (var constructor in scope.Constructors) CheckConstructor(constructor, scope);
 
+        // A destructor has no parameters and no result, 'self' is the object being destroyed
+        if (scope.Destructor is { Body: { } destructorBody })
+            CheckStatements(destructorBody.Statements, scope, expectedReturn: AeroType.Void);
+
         // Each nested type's own members see 'self' bound to that type while we're inside it.
         foreach (var types in scope.Types.Values)
         {

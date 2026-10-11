@@ -767,7 +767,9 @@ public sealed class AstBuilder : SafeIterator<Token>
         {
             case TokenType.ParenthesisOpen:
                 return PopScoped();
-            
+            case TokenType.RefKeyword:
+                return PopRef();
+
             case TokenType.IfKeyword:
                 return PopIf();
             case TokenType.ForKeyword:
@@ -845,6 +847,15 @@ public sealed class AstBuilder : SafeIterator<Token>
         ExpectType(TokenType.ParenthesisClose, "Expected ')'");
         
         return new ScopedExpressionNode(expr, startSpan.To(Peek().Span)); 
+    }
+    RefExpressionNode PopRef()
+    {
+        var startSpan = Peek().Span;
+
+        ExpectType(TokenType.RefKeyword, "Expected 'ref'");
+        var operand = PopPostfix(false); // no trailing lambda, `ref x { }` is not a call
+
+        return new RefExpressionNode(operand, startSpan.To(Peek().Span));
     }
     BlockExpressionNode PopBlock()
     {

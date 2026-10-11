@@ -138,3 +138,10 @@ public record ScopedExpressionNode
     ExpressionNode Scoped,
     SourceSpan Span
 ) : ExpressionNode(Span);
+
+// `ref x` at a call site, passes the operand's address to a `ref` parameter
+public record RefExpressionNode
+(
+    ExpressionNode Operand,
+    SourceSpan Span
+) : ExpressionNode(Span);

@@ -87,6 +87,7 @@ public static class AstNav
             case ConcurrentExpressionNode cc: yield return cc.Body; break;
             case SpawnExpressionNode sp: yield return sp.Body; break;
             case ScopedExpressionNode sc: yield return sc.Scoped; break;
+            case RefExpressionNode rf: yield return rf.Operand; break;
             case PatternTestExpressionNode pt: yield return pt.Target; yield return pt.Pattern; break;
         }
     }

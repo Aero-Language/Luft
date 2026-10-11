@@ -7,7 +7,7 @@ using Luft.Utility;
 
 namespace Luft.Builder;
 
-// Literals, locals, direct calls, operators, if/match, ranges, for over ranges, strings, casts and arrays so far. The rest is sub-task 5e onwards.
+// Literals, locals, calls (direct, ref arguments, function references, lambda values), operators, if/match, ranges, for, strings, casts and arrays so far. The rest is sub-task 5f onwards.
 public sealed partial class FunctionEmitter
 {
     // A Void call succeeds with a default value
@@ -20,6 +20,11 @@ public sealed partial class FunctionEmitter
             case LiteralExpressionNode l: return TryLowerLiteral(l, out value);
             case IdentifierExpressionNode id: return TryLowerLocal(id, out value);
             case ScopedExpressionNode s: return TryLowerExpression(s.Scoped, out value);
+            case MemberAccessExpressionNode m when _typed.BindingOf(m) is FunctionBinding { Function: var f }:
+                return TryLowerFunctionReference(m, f, out value);
+            case RefExpressionNode r:
+                Fail("'ref' can only be used as a call argument", r.Span);
+                return false;
             case CallExpressionNode c: return TryLowerCall(c, out value);
             case BinaryExpressionNode b: return TryLowerBinary(b, out value);
             case UnaryExpressionNode u: return TryLowerUnary(u, out value);
@@ -132,7 +137,9 @@ public sealed partial class FunctionEmitter
             return true;
         }
 
-        Fail($"'{id.Name}' cannot be used as a value yet, only locals and parameters can", id.Span);
+        if (_typed.BindingOf(id) is FunctionBinding { Function: var function }) return TryLowerFunctionReference(id, function, out value);
+
+        Fail($"'{id.Name}' cannot be used as a value yet, only locals, parameters and functions can", id.Span);
         return false;
     }
 
@@ -140,11 +147,22 @@ public sealed partial class FunctionEmitter
     {
         value = default;
 
-        if (_typed.BindingOf(call) is not FunctionBinding { Function: var function })
+        switch (_typed.BindingOf(call))
         {
-            Fail("This kind of call is not lowered yet (sub-task 5 and later)", call.Span);
-            return false;
+            case FunctionBinding { Function: var function }:
+                return TryLowerDirectCall(call, function, out value);
+            case ValueCallBinding { Lambda: var lambda }:
+                return TryLowerValueCall(call, lambda, out value);
+            default:
+                Fail("This kind of call is not lowered yet (sub-task 6 and later)", call.Span);
+                return false;
         }
+    }
+
+    private bool TryLowerDirectCall(CallExpressionNode call, FunctionSymbol function, out LLVMValueRef value)
+    {
+        value = default;
+
         if (!_functions.TryGetValue(function, out var declared))
         {
             Fail($"'{function.Name}' cannot be called yet, only non generic module functions can", call.Span);
@@ -156,27 +174,127 @@ public sealed partial class FunctionEmitter
         for (var i = 0; i < parameters.Count; i++)
         {
             var parameter = parameters[i];
-            if (parameter.Type.IsRef)
-            {
-                Fail("ref arguments are not lowered yet", call.Span);
-                return false;
-            }
-
             var source = i < call.Arguments.Count ? call.Arguments[i] : parameter.Initializer;
-            if (source is null)
-            {
-                Fail($"The argument for '{parameter.Name}' is missing", call.Span);
-                return false;
-            }
 
-            if (!TryLowerValue(source, out var argument)) return false;
-            arguments.Add(Coerce(argument, _typed.TypeOf(source), parameter.Type, source.Span));
+            if (!TryLowerArgument(source, parameter.Type, parameter.Name, call.Span, out var argument)) return false;
+            arguments.Add(argument);
         }
 
         var isVoid = function.ReturnType == AeroType.Void;
         var result = _builder.BuildCall2(declared.Type, declared.Value, arguments.ToArray(), isVoid ? "" : "call");
         if (!isVoid) value = result;
         return true;
+    }
+
+    // A call through a lambda value: { function, environment }, the environment is passed first
+    private bool TryLowerValueCall(CallExpressionNode call, LambdaType lambda, out LLVMValueRef value)
+    {
+        value = default;
+
+        if (call.Arguments.Count != lambda.Parameters.Count)
+        {
+            Fail($"The lambda takes {lambda.Parameters.Count} arguments but got {call.Arguments.Count}", call.Span);
+            return false;
+        }
+        if (!TryLowerValue(call.Target, out var callee)) return false;
+        if (!TryLambdaFunctionType(lambda, call.Span, out var type)) return false;
+
+        var arguments = new List<LLVMValueRef> { _builder.BuildExtractValue(callee, 1, "env") };
+        for (var i = 0; i < lambda.Parameters.Count; i++)
+        {
+            var parameter = lambda.Parameters[i];
+            if (!TryLowerArgument(call.Arguments[i], parameter.Type, parameter.Name, call.Span, out var argument)) return false;
+            arguments.Add(argument);
+        }
+
+        var function = _builder.BuildExtractValue(callee, 0, "fn");
+        var isVoid = lambda.ReturnType == AeroType.Void;
+        var result = _builder.BuildCall2(type, function, arguments.ToArray(), isVoid ? "" : "call");
+        if (!isVoid) value = result;
+        return true;
+    }
+
+    // A ref parameter takes the address of its 'ref' argument, everything else takes the value
+    private bool TryLowerArgument(ExpressionNode? source, AeroType type, string name, SourceSpan span, out LLVMValueRef argument)
+    {
+        argument = default;
+
+        if (source is null)
+        {
+            Fail($"The argument for '{name}' is missing", span);
+            return false;
+        }
+
+        if (type.IsRef)
+        {
+            if (source is RefExpressionNode r) return TryGetAddress(r.Operand, out argument, out _, out _);
+
+            Fail($"The argument for the ref parameter '{name}' has to be passed with 'ref'", source.Span);
+            return false;
+        }
+
+        if (!TryLowerValue(source, out var lowered)) return false;
+        argument = Coerce(lowered, _typed.TypeOf(source), type, source.Span);
+        return true;
+    }
+
+    // The function type behind a lambda value, the environment pointer comes first
+    private bool TryLambdaFunctionType(LambdaType lambda, SourceSpan span, out LLVMTypeRef type)
+    {
+        type = default;
+        if (!_types.TryLower(lambda.ReturnType, _scope, span, out var returnType)) return false;
+
+        var parameters = new List<LLVMTypeRef> { _types.Ptr };
+        foreach (var p in lambda.Parameters)
+        {
+            if (!_types.TryLower(p.Type, _scope, span, out var lowered)) return false;
+            parameters.Add(lowered);
+        }
+
+        type = LLVMTypeRef.CreateFunction(returnType, parameters.ToArray(), false);
+        return true;
+    }
+
+    // A function name as a value is { thunk, null }, so it calls like any other lambda
+    private bool TryLowerFunctionReference(ExpressionNode node, FunctionSymbol function, out LLVMValueRef value)
+    {
+        value = default;
+
+        if (!_functions.TryGetValue(function, out var declared))
+        {
+            Fail($"'{function.Name}' cannot be used as a value yet, only non generic module functions can", node.Span);
+            return false;
+        }
+
+        var thunk = FunctionThunk(declared);
+        value = LLVMValueRef.CreateConstNamedStruct(_types.LambdaStruct, [thunk, LLVMValueRef.CreateConstPointerNull(_types.Ptr)]);
+        return true;
+    }
+
+    // Takes the environment first and forwards the rest to the real function; one per function
+    private LLVMValueRef FunctionThunk(DeclaredFunction declared)
+    {
+        var name = $"thunk.{declared.Value.Name}";
+        var existing = _module.GetNamedFunction(name);
+        if (existing.Handle != IntPtr.Zero) return existing;
+
+        var original = declared.Type;
+        var originalParameters = original.ParamTypes;
+        var thunkType = LLVMTypeRef.CreateFunction(original.ReturnType, new[] { _types.Ptr }.Concat(originalParameters).ToArray(), false);
+
+        var thunk = _module.AddFunction(name, thunkType);
+        thunk.Linkage = LLVMLinkage.LLVMInternalLinkage;
+
+        using var b = _context.CreateBuilder();
+        b.PositionAtEnd(_context.AppendBasicBlock(thunk, "entry"));
+
+        var forwarded = originalParameters.Select((_, i) => thunk.GetParam((uint)i + 1)).ToArray();
+        var isVoid = original.ReturnType.Kind == LLVMTypeKind.LLVMVoidTypeKind;
+        var call = b.BuildCall2(original, declared.Value, forwarded, isVoid ? "" : "call");
+
+        if (isVoid) b.BuildRetVoid();
+        else b.BuildRet(call);
+        return thunk;
     }
 
     // Wraps into a nullable where the target needs it, everything else already matches

@@ -514,6 +514,10 @@ public class PrettyPrinter(int indentAmount = 4, bool isLib = false) : PrinterBa
     {
         return $"({Visit(node.Scoped)})";
     }
+    protected override string VisitRef(RefExpressionNode node)
+    {
+        return $"ref {Visit(node.Operand)}";
+    }
 
     #endregion
 }

@@ -47,10 +47,22 @@ public class BodyResolver : AeroThrower
     
     private void ResolveDefaults(ValueList<ParamNode> parameters, TypeScope scope)
     {
+        var seenDefault = false;
         foreach (var p in parameters)
         {
-            if (p.Initializer is not null)
-                CheckTypes(ResolveExpression(p.Initializer, scope, new()), p.Type, scope, p.Span);
+            if (p.Type.IsRef && FindType(p.Type, scope, p.Span.FilePath) is ClassSymbol)
+                Error($"'ref' cannot be used on the class type '{p.Type}', classes are already references", p.Span);
+
+            if (p.Initializer is null)
+            {
+                // Arguments are positional, so a default can only be left out from the end
+                if (seenDefault) Error($"The parameter '{p.Name}' needs a default value because an earlier parameter has one", p.Span);
+                continue;
+            }
+
+            seenDefault = true;
+            if (p.Type.IsRef) Error($"The 'ref' parameter '{p.Name}' cannot have a default value", p.Span);
+            CheckTypes(ResolveExpression(p.Initializer, scope, new()), p.Type, scope, p.Span);
         }
     }
     
@@ -309,6 +321,16 @@ public class BodyResolver : AeroThrower
     {
         if (from == to || from.IsAuto || to.IsAuto) return true;
         if (from is ArrayType fa && to is ArrayType ta) return IsAssignable(fa.ElementType, ta.ElementType);
+
+        // Parameter names don't matter, so a function reference fits any lambda type with the same shape
+        if (from is LambdaType fl && to is LambdaType tl)
+        {
+            return fl.IsNullable == tl.IsNullable
+                && fl.Parameters.Count == tl.Parameters.Count
+                && fl.Parameters.Zip(tl.Parameters).All(p => IsAssignable(p.First.Type, p.Second.Type))
+                && IsAssignable(fl.ReturnType, tl.ReturnType);
+        }
+
         if (from is GenericType f && to is GenericType t
             && f.Definition.Name == t.Definition.Name
             && f.TypeArguments.Count == t.TypeArguments.Count)
@@ -383,6 +405,7 @@ public class BodyResolver : AeroThrower
             BinaryExpressionNode b => ResolveBinary(b, scope, bScope),
             UnaryExpressionNode u => ResolveUnary(u, scope, bScope),
             ScopedExpressionNode sc => ResolveExpression(sc.Scoped, scope, bScope),
+            RefExpressionNode rf => ResolveRef(rf, scope, bScope),
             PatternTestExpressionNode pt => ResolvePatternTest(pt, scope, bScope),
             IndexExpressionNode idx => ResolveIndex(idx, scope, bScope),
             RangeExpressionNode rg => ResolveRange(rg, scope, bScope),
@@ -575,6 +598,49 @@ public class BodyResolver : AeroThrower
     }
 
 
+    // `ref x` passes the address of a variable, a parameter or an array element
+    private AeroType ResolveRef(RefExpressionNode expr, TypeScope scope, BodyScope bScope)
+    {
+        var operand = ResolveExpression(expr.Operand, scope, bScope);
+        if (operand == AeroType.Error) return AeroType.Error;
+
+        var target = expr.Operand;
+        while (target is ScopedExpressionNode s) target = s.Scoped;
+
+        var addressable = target is IndexExpressionNode || (target is IdentifierExpressionNode && Typed.BindingOf(target) is LocalBinding);
+        if (!addressable) return Fail("'ref' needs a variable, a parameter or an array element", expr.Span);
+
+        if (FindType(operand, scope, expr.Span.FilePath) is ClassSymbol)
+            return Fail($"'ref' cannot be used on the class type '{operand}', classes are already references", expr.Span);
+
+        return operand with { IsRef = true };
+    }
+
+    // Only an explicit 'ref' passes by reference, a ref parameter read by name is a plain value
+    private AeroType[] ResolveArguments(CallExpressionNode expr, TypeScope scope, BodyScope bScope)
+        => expr.Arguments.Select(a =>
+        {
+            var type = ResolveExpression(a, scope, bScope);
+            return a is RefExpressionNode || type == AeroType.Error ? type : type with { IsRef = false };
+        }).ToArray();
+
+    // Explains a failed match where the only problem is a missing or surplus 'ref'
+    private bool ReportRefMismatch(FunctionSymbol function, CallExpressionNode expr, AeroType[] argTypes)
+    {
+        var reported = false;
+        for (var i = 0; i < argTypes.Length && i < function.Parameters.Count; i++)
+        {
+            var parameter = function.Parameters[i];
+            if (argTypes[i] == AeroType.Error || parameter.Type.IsRef == argTypes[i].IsRef) continue;
+
+            Error(parameter.Type.IsRef
+                ? $"The parameter '{parameter.Name}' is 'ref', pass the argument as 'ref'"
+                : $"The parameter '{parameter.Name}' is not 'ref', remove 'ref' from the argument", expr.Arguments[i].Span);
+            reported = true;
+        }
+        return reported;
+    }
+
     private AeroType ResolveCall(CallExpressionNode expr, TypeScope scope, BodyScope bScope)
     {
         var target = ResolveName(expr.Target, scope, bScope);
@@ -588,6 +654,7 @@ public class BodyResolver : AeroThrower
             if (!ArgsMatch(lambdaParamTypes, lambdaArgs))
                 Error("Arguments do not match the lambda's parameter types", expr.Span);
 
+            Typed.Bindings[expr] = new ValueCallBinding(lambda);
             return lambda.ReturnType;
         }
 
@@ -606,7 +673,7 @@ public class BodyResolver : AeroThrower
             return target is ErrorRes ? AeroType.Error : Fail("Expression is not callable", expr.Span);
         }
 
-        var argTypes = expr.Arguments.Select(a => ResolveExpression(a, scope, bScope)).ToArray();
+        var argTypes = ResolveArguments(expr, scope, bScope);
         var explicitArgs = (expr.Target switch
         {
             IdentifierExpressionNode i => i,
@@ -625,7 +692,12 @@ public class BodyResolver : AeroThrower
             if (ParametersMatch(SubstParams(o.Parameters, fn.Substitute), argTypes, generics, bound)) matches.Add((o, bound));
         }
 
+        // An overload that needs no default values is the closer fit
+        if (matches.Count > 1 && matches.Where(m => m.Fn.Parameters.Count == argTypes.Length).ToList() is [var exact])
+            matches = [exact];
+
         if (matches.Count == 1) Typed.Bindings[expr] = new FunctionBinding(matches[0].Fn, matches[0].Bound, fn.Substitute);
+        if (matches.Count == 0 && fn.Overloads.Count == 1 && ReportRefMismatch(fn.Overloads[0], expr, argTypes)) return AeroType.Error;
 
         return matches.Count switch
         {
@@ -637,7 +709,7 @@ public class BodyResolver : AeroThrower
 
     private AeroType ResolveConstructorCall(TypeSymbol type, CallExpressionNode expr, TypeScope scope, BodyScope bScope)
     {
-        var argTypes = expr.Arguments.Select(a => ResolveExpression(a, scope, bScope)).ToArray();
+        var argTypes = ResolveArguments(expr, scope, bScope);
 
         if (type is not (ClassSymbol or StructSymbol or RecordSymbol))
             return Fail($"'{type.Name}' cannot be constructed", expr.Span);
@@ -698,13 +770,17 @@ public class BodyResolver : AeroThrower
         bound ??= new();
         if (argTypes.Length > parameters.Count) return false;
 
-        var requiredCount = parameters.Count(p => p.Initializer is null);
-        if (argTypes.Length < requiredCount) return false;
+        // Every parameter without an argument has to carry a default
+        for (int i = argTypes.Length; i < parameters.Count; i++)
+            if (parameters[i].Initializer is null) return false;
 
         for (int i = 0; i < argTypes.Length; i++)
         {
             if (argTypes[i] == AeroType.Error) continue; // already reported upstream, don't cascade
-            if (!Unify(parameters[i].Type, argTypes[i], generics, bound)) return false;
+
+            // A ref parameter takes exactly the arguments written with 'ref', the rest of the match ignores it
+            if (parameters[i].Type.IsRef != argTypes[i].IsRef) return false;
+            if (!Unify(parameters[i].Type with { IsRef = false }, argTypes[i] with { IsRef = false }, generics, bound)) return false;
         }
 
         return true;
@@ -833,7 +909,7 @@ public class BodyResolver : AeroThrower
         for (int i = 0; i < argTypes.Length; i++)
         {
             if (argTypes[i] == AeroType.Error) continue;
-            if (argTypes[i] != paramTypes[i]) return false;
+            if (!IsAssignable(argTypes[i], paramTypes[i])) return false;
         }
         return true;
     }

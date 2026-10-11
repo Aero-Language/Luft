@@ -22,6 +22,9 @@ public sealed record FunctionBinding(
     Dictionary<string, AeroType> TypeArguments,
     Dictionary<string, AeroType>? ReceiverTypeArguments) : Binding;
 
+// A call through a value of lambda type, e.g. a local or parameter holding a function reference
+public sealed record ValueCallBinding(LambdaType Lambda) : Binding;
+
 // Constructor is null for the primary or implicit constructor; the argument count tells them apart
 public sealed record ConstructorBinding(TypeSymbol Type, ConstructorSymbol? Constructor) : Binding;
 

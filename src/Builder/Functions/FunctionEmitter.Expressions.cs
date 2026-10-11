@@ -22,6 +22,8 @@ public sealed partial class FunctionEmitter
             case ScopedExpressionNode s: return TryLowerExpression(s.Scoped, out value);
             case MemberAccessExpressionNode m when _typed.BindingOf(m) is FunctionBinding { Function: var f }:
                 return TryLowerFunctionReference(m, f, out value);
+            case MemberAccessExpressionNode m when _typed.BindingOf(m) is FieldBinding:
+                return TryLowerField(m, out value);
             case RefExpressionNode r:
                 Fail("'ref' can only be used as a call argument", r.Span);
                 return false;
@@ -139,9 +141,10 @@ public sealed partial class FunctionEmitter
             return true;
         }
 
+        if (_typed.BindingOf(id) is FieldBinding) return TryLowerField(id, out value);
         if (_typed.BindingOf(id) is FunctionBinding { Function: var function }) return TryLowerFunctionReference(id, function, out value);
 
-        Fail($"'{id.Name}' cannot be used as a value yet, only locals, parameters and functions can", id.Span);
+        Fail($"'{id.Name}' cannot be used as a value yet, only locals, parameters, fields and functions can", id.Span);
         return false;
     }
 

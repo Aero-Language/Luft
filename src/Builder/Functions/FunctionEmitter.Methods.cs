@@ -67,14 +67,29 @@ public sealed partial class FunctionEmitter
         return true;
     }
 
-    // True where TryGetAddress succeeds without reporting an error
+    // True for what has a memory location: locals, array elements, self and instance fields reached through one of those
     private bool IsAddressable(ExpressionNode expression)
     {
-        while (expression is ScopedExpressionNode s) expression = s.Scoped;
+        expression = StripScopes(expression);
 
-        return expression is IndexExpressionNode
-            || (expression is IdentifierExpressionNode
-                && _typed.BindingOf(expression) is LocalBinding { Variable: var variable }
-                && _locals.ContainsKey(variable));
+        switch (expression)
+        {
+            case IndexExpressionNode:
+                return true;
+            case LiteralExpressionNode { LiteralType: TokenType.SelfLiteral }:
+                return _self.Handle != IntPtr.Zero;
+            case IdentifierExpressionNode when _typed.BindingOf(expression) is LocalBinding { Variable: var variable }:
+                return _locals.ContainsKey(variable);
+            case IdentifierExpressionNode when _typed.BindingOf(expression) is FieldBinding:
+                return _self.Handle != IntPtr.Zero;
+            case MemberAccessExpressionNode member when _typed.BindingOf(member) is FieldBinding:
+            {
+                var targetType = _typed.TypeOf(member.Target);
+                var owner = targetType is null ? null : _types.SymbolOf(targetType, _scope);
+                return owner is ClassSymbol || IsAddressable(member.Target);
+            }
+            default:
+                return false;
+        }
     }
 }

@@ -87,7 +87,7 @@ public sealed partial class FunctionEmitter
         return true;
     }
 
-    // Anything that can be assigned to or stepped: a local, a parameter or an array element
+    // Anything that can be assigned to or stepped: a local, a parameter, an array element or an instance field
     private bool TryGetAddress(ExpressionNode target, out LLVMValueRef address, out LLVMTypeRef type, out AeroType aeroType)
     {
         address = default;
@@ -106,7 +106,9 @@ public sealed partial class FunctionEmitter
 
         if (target is IndexExpressionNode index) return TryLowerElementAddress(index, out address, out type, out aeroType);
 
-        Fail("Only locals, parameters and array elements can be assigned so far", target.Span);
+        if (IsFieldAccess(target)) return TryGetFieldAddress(target, true, out address, out type, out aeroType);
+
+        Fail("Only locals, parameters, array elements and instance fields can be assigned so far", target.Span);
         return false;
     }
 }

@@ -204,6 +204,9 @@ public sealed class TypeLowering : AeroThrower
         }
     }
 
+    // The declaration behind a plain named type, null for primitives, arrays, lambdas and generics
+    public TypeSymbol? SymbolOf(AeroType type, TypeScope scope) => type is ScalarType s ? Find(s.Name, scope, 0) : null;
+
     public TypeLayout? LayoutOf(TypeSymbol symbol, SourceSpan span)
     {
         if (_layouts.TryGetValue(symbol, out var cached)) return cached;

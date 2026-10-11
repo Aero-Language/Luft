@@ -14,6 +14,7 @@ public sealed class CodeGenerator : AeroThrower, IDisposable
     private readonly LLVMBuilderRef _builder;
     private readonly TypeTable _table;
     private readonly Dictionary<FunctionSymbol, DeclaredFunction> _functions = new();
+    private readonly Dictionary<ConstructorKey, DeclaredFunction> _constructors = new();
     private readonly Dictionary<string, LLVMValueRef> _strings = new();
     private TypeLowering _types = null!;
 
@@ -55,13 +56,14 @@ public sealed class CodeGenerator : AeroThrower, IDisposable
         var failed = false;
         foreach (var (symbol, declared) in _functions)
         {
-            using var emitter = new FunctionEmitter(_context, Module, _types, _table.Typed, _functions, _strings)
-            {
-                Diagnostics = Diagnostics,
-                OnDiagnostic = OnDiagnostic,
-                OnError = OnError
-            };
+            using var emitter = CreateEmitter();
             emitter.Emit(symbol, declared);
+            failed |= emitter.HasErrors;
+        }
+        foreach (var (key, declared) in _constructors)
+        {
+            using var emitter = CreateEmitter();
+            emitter.EmitConstructor(key, declared);
             failed |= emitter.HasErrors;
         }
         if (failed || _types.HasErrors) return false;
@@ -79,6 +81,13 @@ public sealed class CodeGenerator : AeroThrower, IDisposable
 #endif
         return true;
     }
+
+    private FunctionEmitter CreateEmitter() => new(_context, Module, _types, _table.Typed, _functions, _constructors, _strings)
+    {
+        Diagnostics = Diagnostics,
+        OnDiagnostic = OnDiagnostic,
+        OnError = OnError
+    };
 
     // Lowers every non generic declaration once, so type problems show up before function bodies exist
     private void LowerScope(TypeScope scope)
@@ -147,7 +156,45 @@ public sealed class CodeGenerator : AeroThrower, IDisposable
             if (symbol is not (ClassSymbol or StructSymbol or RecordSymbol) || symbol.GenericParameters.Count > 0) continue;
 
             var nested = path.Length == 0 ? symbol.Name : $"{path}.{symbol.Name}";
-            DeclareScope(symbol.Scope, symbol, nested, exported && symbol.Access == AccessMod.Public, symbols);
+            var nestedExported = exported && symbol.Access == AccessMod.Public;
+
+            DeclareConstructors(symbol, nested, nestedExported, symbols);
+            DeclareScope(symbol.Scope, symbol, nested, nestedExported, symbols);
+        }
+    }
+
+    // One init function per constructor: it takes the allocated object (self) first and fills it in, the caller allocates
+    private void DeclareConstructors(TypeSymbol type, string path, bool exported, HashSet<string> symbols)
+    {
+        var layout = _types.LayoutOf(type, type.Span);
+        if (layout is null) return;
+
+        var modulePrefix = type.Module.ModulePath.Length == 0 ? "" : type.Module.ModulePath;
+
+        foreach (var (key, parameters) in ConstructorShapes.Of(type, layout))
+        {
+            var lowered = _types.LowerFunction(AeroType.Void, parameters.Select(p => p.Type), type.Scope, type.Span);
+            if (lowered is null) continue;
+
+            var functionType = LLVMTypeRef.CreateFunction(lowered.Value.ReturnType, new[] { _types.Ptr }.Concat(lowered.Value.ParamTypes).ToArray(), false);
+
+            var external = exported && (key.Symbol is null || key.Symbol.Access == AccessMod.Public);
+            var suffix = string.Join("_", parameters.Select(p => Sanitize(p.Type.ToString()!)));
+            var name = external
+                ? $"{(modulePrefix.Length == 0 ? "" : modulePrefix.Replace('.', '_') + "_")}{path.Replace('.', '_')}_New{(suffix.Length == 0 ? "" : "_" + suffix)}"
+                : $"{(modulePrefix.Length == 0 ? "" : modulePrefix + ".")}{path}.<init:{key.Kind}>({string.Join(",", parameters.Select(p => p.Type))})";
+
+            if (!symbols.Add(name))
+            {
+                Error($"The symbol '{name}' is defined more than once.", type.Span);
+                continue;
+            }
+
+            var value = Module.AddFunction(name, functionType);
+            if (key.Symbol is { Access: AccessMod.Private }) value.Linkage = LLVMLinkage.LLVMInternalLinkage;
+            else if (!external) value.Visibility = LLVMVisibility.LLVMHiddenVisibility;
+
+            _constructors[key] = new DeclaredFunction(value, functionType, type.Scope, type, true);
         }
     }
 

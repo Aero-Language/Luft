@@ -158,6 +158,8 @@ public sealed partial class FunctionEmitter
                 return TryLowerDirectCall(call, function, out value);
             case ValueCallBinding { Lambda: var lambda }:
                 return TryLowerValueCall(call, lambda, out value);
+            case ConstructorBinding binding:
+                return TryLowerConstructorCall(call, binding, out value);
             default:
                 Fail("This kind of call is not lowered yet (sub-task 6 and later)", call.Span);
                 return false;

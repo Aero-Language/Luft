@@ -22,6 +22,7 @@ public sealed partial class FunctionEmitter : AeroThrower, IDisposable
     private readonly TypeLowering _types;
     private readonly TypedInfo _typed;
     private readonly IReadOnlyDictionary<FunctionSymbol, DeclaredFunction> _functions;
+    private readonly IReadOnlyDictionary<ConstructorKey, DeclaredFunction> _constructors;
     private readonly Dictionary<string, LLVMValueRef> _strings;
 
     private readonly Dictionary<VariableSymbol, LocalSlot> _locals = new(ReferenceEqualityComparer.Instance);
@@ -37,13 +38,15 @@ public sealed partial class FunctionEmitter : AeroThrower, IDisposable
     public bool HasErrors { get; private set; }
 
     public FunctionEmitter(LLVMContextRef context, LLVMModuleRef module, TypeLowering types, TypedInfo typed,
-        IReadOnlyDictionary<FunctionSymbol, DeclaredFunction> functions, Dictionary<string, LLVMValueRef> strings)
+        IReadOnlyDictionary<FunctionSymbol, DeclaredFunction> functions, IReadOnlyDictionary<ConstructorKey, DeclaredFunction> constructors,
+        Dictionary<string, LLVMValueRef> strings)
     {
         _context = context;
         _module = module;
         _types = types;
         _typed = typed;
         _functions = functions;
+        _constructors = constructors;
         _strings = strings;
         _builder = context.CreateBuilder();
     }

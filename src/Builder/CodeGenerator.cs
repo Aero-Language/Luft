@@ -105,44 +105,57 @@ public sealed class CodeGenerator : AeroThrower, IDisposable
         }
     }
 
-    // Module level functions only, methods follow with user types in sub-task 6
     private void DeclareFunctions()
     {
         var symbols = new HashSet<string> { "main" };
 
-        foreach (var module in _table.Modules.Values)
+        foreach (var module in _table.Modules.Values) DeclareScope(module.Scope, null, "", true, symbols);
+    }
+
+    // The functions of one scope, then the methods of every non generic type in it. `path` is the dotted type path, empty at module level.
+    private void DeclareScope(TypeScope scope, TypeSymbol? owner, string path, bool exported, HashSet<string> symbols)
+    {
+        foreach (var f in scope.Functions.Values.SelectMany(l => l))
         {
-            foreach (var f in module.Scope.Functions.Values.SelectMany(l => l))
+            if (f.GenericParameters.Count > 0) continue;
+
+            var hasSelf = owner is not null && !f.MemberMods.HasFlag(MemberMod.Static);
+            var type = _types.LowerFunction(f.ReturnType, f.Parameters.Select(p => p.Type), scope, f.Span);
+            if (type is null) continue;
+
+            // self comes first and is always a pointer, to the object for classes and to the value for structs
+            if (hasSelf) type = LLVMTypeRef.CreateFunction(type.Value.ReturnType, new[] { _types.Ptr }.Concat(type.Value.ParamTypes).ToArray(), false);
+
+            var external = f.Access == AccessMod.Public && exported;
+            var name = external ? ExportName(f, scope, path) : InternalName(f, path);
+            if (!symbols.Add(name))
             {
-                if (f.GenericParameters.Count > 0) continue;
-
-                var type = _types.LowerFunction(f.ReturnType, f.Parameters.Select(p => p.Type), module.Scope, f.Span);
-                if (type is null) continue;
-
-                var name = f.Access == AccessMod.Public ? ExportName(f, module.Scope) : InternalName(f);
-                if (!symbols.Add(name))
-                {
-                    Error($"The symbol '{name}' is defined more than once.", f.Span);
-                    continue;
-                }
-
-                var value = Module.AddFunction(name, type.Value);
-                switch (f.Access)
-                {
-                    case AccessMod.Private: value.Linkage = LLVMLinkage.LLVMInternalLinkage; break;
-                    case AccessMod.Public: break; // external, callable from any language
-                    default: value.Visibility = LLVMVisibility.LLVMHiddenVisibility; break;
-                }
-
-                _functions[f] = new DeclaredFunction(value, type.Value, module.Scope);
+                Error($"The symbol '{name}' is defined more than once.", f.Span);
+                continue;
             }
+
+            var value = Module.AddFunction(name, type.Value);
+            if (f.Access == AccessMod.Private) value.Linkage = LLVMLinkage.LLVMInternalLinkage;
+            else if (!external) value.Visibility = LLVMVisibility.LLVMHiddenVisibility;
+            // external otherwise, callable from any language
+
+            _functions[f] = new DeclaredFunction(value, type.Value, scope, owner, hasSelf);
+        }
+
+        foreach (var symbol in scope.Types.Values.SelectMany(l => l))
+        {
+            if (symbol is not (ClassSymbol or StructSymbol or RecordSymbol) || symbol.GenericParameters.Count > 0) continue;
+
+            var nested = path.Length == 0 ? symbol.Name : $"{path}.{symbol.Name}";
+            DeclareScope(symbol.Scope, symbol, nested, exported && symbol.Access == AccessMod.Public, symbols);
         }
     }
 
-    // Module_Sub_Name, underscores are banned in Aero names so '_' never collides. Only overloads get a parameter suffix.
-    private static string ExportName(FunctionSymbol f, TypeScope scope)
+    // Module_Sub_Type_Name, underscores are banned in Aero names so '_' never collides. Only overloads get a parameter suffix.
+    private static string ExportName(FunctionSymbol f, TypeScope scope, string path)
     {
         var prefix = f.Module.ModulePath.Length == 0 ? "" : f.Module.ModulePath.Replace('.', '_') + "_";
+        if (path.Length > 0) prefix += path.Replace('.', '_') + "_";
         var name = prefix + f.Name;
 
         if (!scope.Functions.TryGetValue(f.Name, out var overloads) || overloads.Count <= 1) return name;
@@ -154,16 +167,17 @@ public sealed class CodeGenerator : AeroThrower, IDisposable
     private static string Sanitize(string text) => new(text.Select(c => char.IsLetterOrDigit(c) ? c : '_').ToArray());
 
     // Not exported, so the full signature keeps overloads and equal names in different modules apart
-    private static string InternalName(FunctionSymbol f)
+    private static string InternalName(FunctionSymbol f, string path)
     {
         var prefix = f.Module.ModulePath.Length == 0 ? "" : f.Module.ModulePath + ".";
+        if (path.Length > 0) prefix += path + ".";
         return $"{prefix}{f.Name}({string.Join(",", f.Parameters.Select(p => p.Type))})";
     }
 
     // The C main calls Aero's Main and passes its Int result on as the exit code
     private bool EmitEntryPoint()
     {
-        var mains = _functions.Keys.Where(f => f.Name == "Main").ToList();
+        var mains = _functions.Where(kv => kv.Value.Owner is null && kv.Key.Name == "Main").Select(kv => kv.Key).ToList();
         if (mains.Count > 1)
         {
             Error("There is more than one 'Main' function.", mains[1].Span);

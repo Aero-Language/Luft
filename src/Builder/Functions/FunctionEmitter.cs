@@ -6,7 +6,8 @@ using Luft.Utility;
 
 namespace Luft.Builder;
 
-public sealed record DeclaredFunction(LLVMValueRef Value, LLVMTypeRef Type, TypeScope Scope);
+// Owner is the type a method belongs to, null for module level functions. A method with HasSelf takes the self pointer as its first parameter.
+public sealed record DeclaredFunction(LLVMValueRef Value, LLVMTypeRef Type, TypeScope Scope, TypeSymbol? Owner = null, bool HasSelf = false);
 
 // Lowers one function body. Statements live here, expressions in FunctionEmitter.Expressions.cs.
 public sealed partial class FunctionEmitter : AeroThrower, IDisposable
@@ -27,6 +28,8 @@ public sealed partial class FunctionEmitter : AeroThrower, IDisposable
     private readonly Stack<(LLVMBasicBlockRef Break, LLVMBasicBlockRef Continue)> _loops = new();
 
     private LLVMValueRef _function;
+    private LLVMValueRef _self; // the self pointer, unset outside instance methods
+    private TypeSymbol? _selfOwner;
     private LLVMBasicBlockRef _entry;
     private TypeScope _scope = null!;
     private AeroType _returnType = AeroType.Void;
@@ -62,8 +65,17 @@ public sealed partial class FunctionEmitter : AeroThrower, IDisposable
         _entry = _context.AppendBasicBlock(_function, "entry");
         _builder.PositionAtEnd(_entry);
 
+        var offset = 0;
+        if (declared.HasSelf)
+        {
+            _self = _function.GetParam(0);
+            _self.Name = "self";
+            _selfOwner = declared.Owner;
+            offset = 1;
+        }
+
         var parameters = symbol.Declaration.Parameters;
-        for (var i = 0; i < parameters.Count; i++) BindParameter(parameters[i], _function.GetParam((uint)i));
+        for (var i = 0; i < parameters.Count; i++) BindParameter(parameters[i], _function.GetParam((uint)(i + offset)));
 
         LowerStatements(symbol.Body.Statements, true);
 

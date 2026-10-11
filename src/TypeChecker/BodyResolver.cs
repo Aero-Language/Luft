@@ -1301,6 +1301,7 @@ public class BodyResolver : AeroThrower
             _ => (Binding?)null
         };
         if (binding is not null) Typed.Bindings[expr] = binding;
+        if (resolved is ValueRes value) Typed.Types[expr] = value.Type; // a receiver such as the 'v' in 'v.Add(w)' is only resolved by name
 
         return resolved;
     }

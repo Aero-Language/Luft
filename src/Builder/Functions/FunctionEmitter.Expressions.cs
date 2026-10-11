@@ -81,6 +81,8 @@ public sealed partial class FunctionEmitter
             case (TokenType.NullLiteral, _):
                 value = LLVMValueRef.CreateConstPointerNull(_types.Ptr);
                 return true;
+            case (TokenType.SelfLiteral, _) when _self.Handle != IntPtr.Zero:
+                return TryLowerSelf(l.Span, out value);
             default:
                 Fail($"The literal '{l.LiteralType}' is not lowered yet", l.Span);
                 return false;
@@ -171,6 +173,13 @@ public sealed partial class FunctionEmitter
 
         var parameters = function.Parameters;
         var arguments = new List<LLVMValueRef>();
+
+        if (declared.HasSelf)
+        {
+            if (!TryLowerReceiver(call, declared.Owner!, out var receiver)) return false;
+            arguments.Add(receiver);
+        }
+
         for (var i = 0; i < parameters.Count; i++)
         {
             var parameter = parameters[i];
@@ -263,6 +272,12 @@ public sealed partial class FunctionEmitter
         if (!_functions.TryGetValue(function, out var declared))
         {
             Fail($"'{function.Name}' cannot be used as a value yet, only non generic module functions can", node.Span);
+            return false;
+        }
+
+        if (declared.HasSelf)
+        {
+            Fail($"The method '{function.Name}' cannot be used as a value yet, it needs an object", node.Span);
             return false;
         }
 

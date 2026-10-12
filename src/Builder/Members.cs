@@ -25,6 +25,9 @@ public sealed class MemberTable
     public Dictionary<PropertySymbol, GlobalVariable> Backing { get; } = new();
 
     public Dictionary<AccessorKey, DeclaredFunction> Accessors { get; } = new();
+
+    // Operator overloads, declared like methods with self first
+    public Dictionary<OperatorSymbol, DeclaredFunction> Operators { get; } = new(ReferenceEqualityComparer.Instance);
     public List<StaticInitializer> Initializers { get; } = [];
 
     // Slot of every virtual method in its class's vtable (slot 0 is the destructor)

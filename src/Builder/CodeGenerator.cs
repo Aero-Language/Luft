@@ -79,6 +79,12 @@ public sealed class CodeGenerator : AeroThrower, IDisposable
             emitter.EmitAccessor(key, declared);
             failed |= emitter.HasErrors;
         }
+        foreach (var (symbol, declared) in _members.Operators)
+        {
+            using var emitter = CreateEmitter();
+            emitter.EmitOperator(symbol, declared);
+            failed |= emitter.HasErrors;
+        }
         foreach (var (type, declared) in _members.Destroyers)
         {
             using var emitter = CreateEmitter();
@@ -185,6 +191,7 @@ public sealed class CodeGenerator : AeroThrower, IDisposable
 
         DeclareFields(scope, owner, path, exported, symbols);
         DeclareProperties(scope, owner, path, exported, symbols);
+        if (owner is not null) DeclareOperators(scope, owner, path, exported, symbols);
 
         foreach (var symbol in scope.Types.Values.SelectMany(l => l))
         {
@@ -235,6 +242,38 @@ public sealed class CodeGenerator : AeroThrower, IDisposable
 
     private static string QualifiedName(ModuleSymbol module, string path)
         => (module.ModulePath.Length == 0 ? "" : module.ModulePath + ".") + path;
+
+    // An operator is a method named after its Operator: self is the left operand, the parameter the right one, no parameter means unary
+    private void DeclareOperators(TypeScope scope, TypeSymbol owner, string path, bool exported, HashSet<string> symbols)
+    {
+        foreach (var o in scope.Operators.Values.SelectMany(l => l))
+        {
+            if (o.Body is null) continue;
+
+            var type = _types.LowerFunction(o.ReturnType, o.Parameters.Select(p => p.Type), scope, o.Span);
+            if (type is null) continue;
+
+            type = LLVMTypeRef.CreateFunction(type.Value.ReturnType, new[] { _types.Ptr }.Concat(type.Value.ParamTypes).ToArray(), false);
+
+            var external = o.Access == AccessMod.Public && exported;
+            var suffix = string.Join("_", o.Parameters.Select(p => Sanitize(p.Type.ToString()!)));
+            var name = external
+                ? GlobalName($"Operator{o.Op}{(suffix.Length == 0 ? "" : "_" + suffix)}", path, true)
+                : GlobalName($"<operator>{o.Op}({string.Join(",", o.Parameters.Select(p => p.Type))})", path, false);
+
+            if (!symbols.Add(name))
+            {
+                Error($"The symbol '{name}' is defined more than once.", o.Span);
+                continue;
+            }
+
+            var value = Module.AddFunction(name, type.Value);
+            if (o.Access == AccessMod.Private) value.Linkage = LLVMLinkage.LLVMInternalLinkage;
+            else if (!external) value.Visibility = LLVMVisibility.LLVMHiddenVisibility;
+
+            _members.Operators[o] = new DeclaredFunction(value, type.Value, scope, owner, true);
+        }
+    }
 
     // Static, const and module level fields live in globals, their initial values are stored at startup
     private void DeclareFields(TypeScope scope, TypeSymbol? owner, string path, bool exported, HashSet<string> symbols)

@@ -28,11 +28,8 @@ public sealed partial class FunctionEmitter
                 return TryLowerShortCircuit(b, out value);
         }
 
-        if (_typed.BindingOf(b) is OperatorBinding)
-        {
-            Fail("Overloaded operators are lowered in sub-task 5f", b.Span);
-            return false;
-        }
+        if (_typed.BindingOf(b) is OperatorBinding { Operator: var overload })
+            return TryLowerOperatorCall(overload, b.Left, b.Right, b.Span, out value);
 
         if (!TryLowerValue(b.Left, out var left) || !TryLowerValue(b.Right, out var right)) return false;
         return TryEmitBinary(b.Operator, left, _typed.TypeOf(b.Left), right, _typed.TypeOf(b.Right), b.Span, out value);
@@ -209,10 +206,11 @@ public sealed partial class FunctionEmitter
     {
         value = default;
 
-        if (_typed.BindingOf(u) is OperatorBinding)
+        if (_typed.BindingOf(u) is OperatorBinding { Operator: var overload })
         {
-            Fail("Overloaded operators are lowered in sub-task 5f", u.Span);
-            return false;
+            return u.Operator is Operator.Increment or Operator.Decrement
+                ? TryLowerStepOverload(u, overload, out value)
+                : TryLowerOperatorCall(overload, u.Operand, null, u.Span, out value);
         }
 
         if (u.Operator is Operator.Increment or Operator.Decrement) return TryLowerStep(u, out value);
@@ -318,9 +316,9 @@ public sealed partial class FunctionEmitter
             return;
         }
 
-        if (_typed.BindingOf(a) is OperatorBinding)
+        if (_typed.BindingOf(a) is OperatorBinding { Operator: var overload })
         {
-            Fail("Overloaded operators are lowered in sub-task 5f", a.Span);
+            LowerOverloadedCompound(a, overload);
             return;
         }
 

@@ -63,12 +63,16 @@ public sealed partial class FunctionEmitter : AeroThrower, IDisposable
     }
 
     public void Emit(FunctionSymbol symbol, DeclaredFunction declared)
+        => EmitBody(declared, symbol.Declaration.Parameters, symbol.Body, symbol.ReturnType);
+
+    // Functions and operators share this: self first when there is one, then the parameters, then the statements
+    private void EmitBody(DeclaredFunction declared, ValueList<ParamNode> parameters, BlockExpressionNode? body, AeroType returnType)
     {
-        if (symbol.Body is null) return;
+        if (body is null) return;
 
         _function = declared.Value;
         _scope = declared.Scope;
-        _returnType = symbol.ReturnType;
+        _returnType = returnType;
 
         _entry = _context.AppendBasicBlock(_function, "entry");
         _builder.PositionAtEnd(_entry);
@@ -82,10 +86,9 @@ public sealed partial class FunctionEmitter : AeroThrower, IDisposable
             offset = 1;
         }
 
-        var parameters = symbol.Declaration.Parameters;
         for (var i = 0; i < parameters.Count; i++) BindParameter(parameters[i], _function.GetParam((uint)(i + offset)));
 
-        LowerStatements(symbol.Body.Statements, true);
+        LowerStatements(body.Statements, true);
 
         if (IsTerminated()) return;
         if (_returnType == AeroType.Void) _builder.BuildRetVoid();

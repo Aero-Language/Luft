@@ -29,9 +29,10 @@ public sealed class FunctionSymbol(string name, AccessMod access, ModuleSymbol m
 
 public sealed record ParamSymbol(string Name, AeroType Type, VariableKind VarKind, ExpressionNode? Initializer);
 
-// An `op fun` declaration — overloads a specific Operator rather than being named. Arity
-// distinguishes binary overloads (one parameter, the right-hand operand) from unary overloads
-// (zero parameters); BodyResolver's ParametersMatch/FindOperatorOverload pick between them.
+// An `op fun` declaration — overloads a specific Operator rather than being named. An instance
+// overload has self as its left operand: one parameter is binary, none is unary. A static overload
+// (declared `static`, or with two parameters) takes every operand as a parameter: two are binary,
+// one (needs `static`) is unary. BodyResolver's FindOperatorOverload picks between them.
 public sealed class OperatorSymbol(Operator op, AccessMod access, ModuleSymbol module, OperatorDeclarationNode declaration) : SourceSymbol(declaration.Span), ISignature
 {
     public Operator Op { get; } = op;
@@ -41,6 +42,7 @@ public sealed class OperatorSymbol(Operator op, AccessMod access, ModuleSymbol m
 
     public MemberMod MemberMods => Declaration.MemberMods;
     public InheritanceMod InheritanceMod => Declaration.InheritanceMod;
+    public bool IsStatic => MemberMods.HasFlag(MemberMod.Static) || Declaration.Parameters.Count == 2;
 
     public ValueList<ParamSymbol> Parameters => Declaration.Parameters
         .Select(p => new ParamSymbol(p.Name, p.Type, p.VarKind, p.Initializer)).ToValueList();

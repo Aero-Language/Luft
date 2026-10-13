@@ -243,7 +243,7 @@ public sealed class CodeGenerator : AeroThrower, IDisposable
     private static string QualifiedName(ModuleSymbol module, string path)
         => (module.ModulePath.Length == 0 ? "" : module.ModulePath + ".") + path;
 
-    // An operator is a method named after its Operator: self is the left operand, the parameter the right one, no parameter means unary
+    // An operator is a method named after its Operator: self is the left operand, the parameter the right one, no parameter means unary; a static one has no self
     private void DeclareOperators(TypeScope scope, TypeSymbol owner, string path, bool exported, HashSet<string> symbols)
     {
         foreach (var o in scope.Operators.Values.SelectMany(l => l))
@@ -253,7 +253,7 @@ public sealed class CodeGenerator : AeroThrower, IDisposable
             var type = _types.LowerFunction(o.ReturnType, o.Parameters.Select(p => p.Type), scope, o.Span);
             if (type is null) continue;
 
-            type = LLVMTypeRef.CreateFunction(type.Value.ReturnType, new[] { _types.Ptr }.Concat(type.Value.ParamTypes).ToArray(), false);
+            if (!o.IsStatic) type = LLVMTypeRef.CreateFunction(type.Value.ReturnType, new[] { _types.Ptr }.Concat(type.Value.ParamTypes).ToArray(), false);
 
             var external = o.Access == AccessMod.Public && exported;
             var suffix = string.Join("_", o.Parameters.Select(p => Sanitize(p.Type.ToString()!)));
@@ -271,7 +271,7 @@ public sealed class CodeGenerator : AeroThrower, IDisposable
             if (o.Access == AccessMod.Private) value.Linkage = LLVMLinkage.LLVMInternalLinkage;
             else if (!external) value.Visibility = LLVMVisibility.LLVMHiddenVisibility;
 
-            _members.Operators[o] = new DeclaredFunction(value, type.Value, scope, owner, true);
+            _members.Operators[o] = new DeclaredFunction(value, type.Value, scope, owner, !o.IsStatic);
         }
     }
 

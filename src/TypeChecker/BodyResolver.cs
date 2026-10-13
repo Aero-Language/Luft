@@ -291,6 +291,12 @@ public class BodyResolver : AeroThrower
         foreach (var op in operators)
         {
             ResolveDefaults(op.Declaration.Parameters, scope);
+
+            var count = op.Declaration.Parameters.Count;
+            if (op.IsStatic && count is 0 or > 2)
+                Error($"A static operator takes one or two parameters, '{op.Op.AsString()}' has {count}", op.Span);
+            else if (!op.IsStatic && count > 1)
+                Error($"An operator takes at most one parameter besides self, '{op.Op.AsString()}' has {count}", op.Span);
             
             if (op.Body is not null)
             {
@@ -1025,22 +1031,34 @@ public class BodyResolver : AeroThrower
     // to the primitive table.
     private OperatorSymbol? TryOperatorOverload(Operator op, AeroType receiver, AeroType[] argTypes, TypeScope scope, string filePath)
     {
-        var symbol = FindType(receiver, scope, filePath);
-        return symbol is null ? null : FindOperatorOverload(symbol, op, argTypes, []);
+        var operands = new[] { receiver }.Concat(argTypes).ToArray();
+
+        if (FindType(receiver, scope, filePath) is { } symbol
+            && FindOperatorOverload(symbol, op, operands, true, []) is { } found) return found;
+
+        // A static overload can also live on the right operand's type (`2.0 * vector`)
+        if (argTypes.Length == 1
+            && FindType(argTypes[0], scope, filePath) is { } other
+            && FindOperatorOverload(other, op, operands, false, []) is { } foreign) return foreign;
+
+        return null;
     }
 
-    private OperatorSymbol? FindOperatorOverload(TypeSymbol type, Operator op, AeroType[] argTypes, HashSet<TypeSymbol> seen)
+    // `operands` is the left operand followed by the right one (none for unary). An instance overload only counts on the left operand's type.
+    private OperatorSymbol? FindOperatorOverload(TypeSymbol type, Operator op, AeroType[] operands, bool instanceAllowed, HashSet<TypeSymbol> seen)
     {
         if (!seen.Add(type)) return null; // inheritance cycle guard, same idea as FindMember
 
         if (type.Scope.Operators.TryGetValue(op, out var overloads))
         {
-            var match = overloads.FirstOrDefault(o => ParametersMatch(o.Parameters, argTypes));
+            var match = overloads.FirstOrDefault(o => o.IsStatic
+                ? o.Parameters.Count == operands.Length && ParametersMatch(o.Parameters, operands)
+                : instanceAllowed && ParametersMatch(o.Parameters, operands[1..]));
             if (match is not null) return match;
         }
 
         foreach (var b in BasesOf(type))
-            if (FindOperatorOverload(b, op, argTypes, seen) is { } inherited) return inherited;
+            if (FindOperatorOverload(b, op, operands, instanceAllowed, seen) is { } inherited) return inherited;
 
         return null;
     }
@@ -1100,8 +1118,7 @@ public class BodyResolver : AeroThrower
         var operand = ResolveExpression(expr.Operand, scope, bScope);
         if (operand == AeroType.Error) return AeroType.Error;
 
-        // A unary overload is an operator declaration with zero parameters (e.g. `op fun -() -> Vector2`
-        // for unary '-'), as opposed to the one-parameter form binary '-' looks for.
+        // A unary overload is `op fun -() -> Vector2`, or `static op fun -(v: Vector2)` in its static form
         if (TryOperatorOverload(expr.Operator, operand, [], scope, expr.Span.FilePath) is { } overload)
         {
             Typed.Bindings[expr] = new OperatorBinding(overload);

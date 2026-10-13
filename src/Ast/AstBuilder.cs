@@ -151,8 +151,17 @@ public sealed class AstBuilder : SafeIterator<Token>
             }
         }
         
-        return new ModuleDeclarationNode(identifier, decls.ToArray(), Peek().Span);
+        // Everything declared directly in a module belongs to no instance, so it is static
+        return new ModuleDeclarationNode(identifier, decls.Select(AsModuleMember).ToArray(), Peek().Span);
     }
+    static DeclarationNode AsModuleMember(DeclarationNode decl) => decl switch
+    {
+        FunctionDeclarationNode f => f with { MemberMods = f.MemberMods | MemberMod.Static },
+        OperatorDeclarationNode o => o with { MemberMods = o.MemberMods | MemberMod.Static },
+        PropertyDeclarationNode p => p with { MemberMods = p.MemberMods | MemberMod.Static },
+        FieldDeclarationNode v => v with { MemberMods = v.MemberMods | MemberMod.Static },
+        _ => decl
+    };
     DeclarationNode PopFunction(ValueList<AnnotationStatementNode>? annotations, AccessMod? accessMod, MemberMod memberMod, InheritanceMod inheritance)
         => PopFunction(annotations, accessMod, memberMod, inheritance, out _);
 

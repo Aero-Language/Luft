@@ -4,10 +4,10 @@
 public enum MemberMod
 {
     None = 0,
-    Static,
-    Weak,
-    Partial,
-    Unsafe
+    Static = 1,
+    Weak = 2,
+    Partial = 4,
+    Unsafe = 8
 }
 
 public static class MemberModExtensions
@@ -16,7 +16,7 @@ public static class MemberModExtensions
     {
         List<string> mods = [];
         
-        if (mod.HasFlag(MemberMod.None))    return "";
+        if (mod == MemberMod.None) return "";
         if (mod.HasFlag(MemberMod.Static))  mods.Add("static");
         if (mod.HasFlag(MemberMod.Weak))    mods.Add("weak");
         if (mod.HasFlag(MemberMod.Partial)) mods.Add("partial");

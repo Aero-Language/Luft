@@ -91,10 +91,56 @@ public class BodyResolver : AeroThrower
                 CurrentSelfType = SelfTypeFor(type);
 
                 CheckScope(type.Scope);
+                if (type is RecordSymbol record) CheckRecordEquality(record);
 
                 CurrentSelfType = previousSelf;
             }
         }
+    }
+
+    // A record's built in equality compares every instance field, inherited ones included, so each field has to be comparable
+    private void CheckRecordEquality(RecordSymbol record)
+    {
+        var seen = new HashSet<TypeSymbol>();
+        TypeSymbol? type = record;
+
+        while (type is not null && seen.Add(type))
+        {
+            foreach (var field in type.Scope.Fields.Values.SelectMany(l => l))
+            {
+                if (IsStatic(field.Declaration.MemberMods, field.VarKind)) continue;
+
+                var fieldType = TypeOfField(field, type.Scope);
+                if (fieldType == AeroType.Error || fieldType.IsAuto) continue;
+
+                if (!IsComparable(fieldType, type.Scope, field.Span.FilePath, out var reason))
+                    Error($"The record '{record.Name}' cannot compare its field '{field.Name}': {reason}", field.Span);
+            }
+
+            // Only a base record or base struct can contribute fields, the rest are traits
+            type = BasesOf(type).FirstOrDefault(b => b is StructSymbol or RecordSymbol);
+        }
+    }
+
+    private bool IsComparable(AeroType type, TypeScope scope, string file, out string reason)
+    {
+        reason = "";
+
+        if (type is LambdaType)
+        {
+            reason = "lambdas cannot be compared";
+            return false;
+        }
+
+        // A struct field needs the struct's own 'Equality', classes compare by reference and records by their fields
+        var plain = type with { IsRef = false, IsNullable = false };
+        if (FindType(plain, scope, file) is StructSymbol && TryOperatorOverload(Operator.Equality, plain, [plain], scope, file) is null)
+        {
+            reason = $"the struct '{plain}' has no 'operator fun Equality'";
+            return false;
+        }
+
+        return true;
     }
 
     // 'self' inside a generic type's own body isn't the bare type — 'Box' and 'Box<T>' are
@@ -944,6 +990,28 @@ public class BodyResolver : AeroThrower
             Typed.Bindings[node] = new OperatorBinding(overload);
             return overload.ReturnType;
         }
+
+        // '!=' without an overload of its own is the negation of an 'Equality' overload
+        if (op == Operator.Inequality
+            && TryOperatorOverload(Operator.Equality, left, [right], scope, node.Span.FilePath) is { ReturnType: var equalityResult } equality
+            && equalityResult == AeroType.Bool)
+        {
+            Typed.Bindings[node] = new OperatorBinding(equality);
+            return AeroType.Bool;
+        }
+
+        // Only records compare field by field on their own, classes and structs have to overload 'Equality'
+        if (op is Operator.Equality or Operator.Inequality && left == right && FindType(left, scope, node.Span.FilePath) is { } compared)
+        {
+            switch (compared)
+            {
+                case RecordSymbol:
+                    return AeroType.Bool;
+                case ClassSymbol or StructSymbol:
+                    return Fail($"'{op.AsString()}' is not defined for '{left}', classes and structs have no built in equality: declare 'operator fun Equality' on it or use a record", node.Span);
+            }
+        }
+
         if (TryPrimitiveOperator(op, left, right) is { } primitiveResult) return primitiveResult;
 
         return Fail($"Operator '{op.AsString()}' is not defined for '{left}' and '{right}'", node.Span);

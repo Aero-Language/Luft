@@ -29,7 +29,14 @@ public sealed partial class FunctionEmitter
         }
 
         if (_typed.BindingOf(b) is OperatorBinding { Operator: var overload })
-            return TryLowerOperatorCall(overload, b.Left, b.Right, b.Span, out value);
+        {
+            if (!TryLowerOperatorCall(overload, b.Left, b.Right, b.Span, out value)) return false;
+
+            // '!=' that borrowed the 'Equality' overload negates its Bool (i8) result
+            if (b.Operator == Operator.Inequality && overload.Op == Operator.Equality)
+                value = _builder.BuildXor(value, LLVMValueRef.CreateConstInt(_context.Int8Type, 1), "ne");
+            return true;
+        }
 
         if (!TryLowerValue(b.Left, out var left) || !TryLowerValue(b.Right, out var right)) return false;
         return TryEmitBinary(b.Operator, left, _typed.TypeOf(b.Left), right, _typed.TypeOf(b.Right), b.Span, out value);

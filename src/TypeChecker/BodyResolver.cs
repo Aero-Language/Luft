@@ -136,7 +136,7 @@ public class BodyResolver : AeroThrower
         var plain = type with { IsRef = false, IsNullable = false };
         if (FindType(plain, scope, file) is StructSymbol && TryOperatorOverload(Operator.Equality, plain, [plain], scope, file) is null)
         {
-            reason = $"the struct '{plain}' has no 'operator fun Equality'";
+            reason = $"the struct '{plain}' has no 'op fun =='";
             return false;
         }
 
@@ -1008,7 +1008,7 @@ public class BodyResolver : AeroThrower
                 case RecordSymbol:
                     return AeroType.Bool;
                 case ClassSymbol or StructSymbol:
-                    return Fail($"'{op.AsString()}' is not defined for '{left}', classes and structs have no built in equality: declare 'operator fun Equality' on it or use a record", node.Span);
+                    return Fail($"'{op.AsString()}' is not defined for '{left}', classes and structs have no built in equality: declare 'op fun ==' on it or use a record", node.Span);
             }
         }
 
@@ -1017,7 +1017,7 @@ public class BodyResolver : AeroThrower
         return Fail($"Operator '{op.AsString()}' is not defined for '{left}' and '{right}'", node.Span);
     }
 
-    // Looks up a real `operator fun` declaration (an OperatorDeclarationNode, registered by
+    // Looks up a real `op fun` declaration (an OperatorDeclarationNode, registered by
     // TypeLookup as an OperatorSymbol under TypeScope.Operators) on `receiver`'s type — walking
     // base types the same way FindMember does. `argTypes` is the full argument list: one entry
     // for a binary operator's right-hand operand, zero for a unary operator. Returns null — not
@@ -1100,7 +1100,7 @@ public class BodyResolver : AeroThrower
         var operand = ResolveExpression(expr.Operand, scope, bScope);
         if (operand == AeroType.Error) return AeroType.Error;
 
-        // A unary overload is an operator declaration with zero parameters (e.g. `operator fun Subtract() -> Vector2`
+        // A unary overload is an operator declaration with zero parameters (e.g. `op fun -() -> Vector2`
         // for unary '-'), as opposed to the one-parameter form binary '-' looks for.
         if (TryOperatorOverload(expr.Operator, operand, [], scope, expr.Span.FilePath) is { } overload)
         {

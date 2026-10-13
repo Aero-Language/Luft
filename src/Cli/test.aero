@@ -148,11 +148,11 @@ module AeroTests.ComplexTest {
             Imaginary = i
         }
 
-        public operator fun Add(other: Complex) -> Complex {
+        public op fun +(other: Complex) -> Complex {
             Complex(Real + other.Real, Imaginary + other.Imaginary)
         }
 
-        public operator fun Multiply(scalar: Float) -> Complex {
+        public op fun *(scalar: Float) -> Complex {
             Complex(Real * scalar, Imaginary * scalar)
         }
     }

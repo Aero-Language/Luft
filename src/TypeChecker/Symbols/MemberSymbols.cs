@@ -29,7 +29,7 @@ public sealed class FunctionSymbol(string name, AccessMod access, ModuleSymbol m
 
 public sealed record ParamSymbol(string Name, AeroType Type, VariableKind VarKind, ExpressionNode? Initializer);
 
-// An `operator fun` declaration — overloads a specific Operator rather than being named. Arity
+// An `op fun` declaration — overloads a specific Operator rather than being named. Arity
 // distinguishes binary overloads (one parameter, the right-hand operand) from unary overloads
 // (zero parameters); BodyResolver's ParametersMatch/FindOperatorOverload pick between them.
 public sealed class OperatorSymbol(Operator op, AccessMod access, ModuleSymbol module, OperatorDeclarationNode declaration) : SourceSymbol(declaration.Span), ISignature

@@ -23,7 +23,7 @@ public sealed class TypeScope(TypeScope? containing)
     public Dictionary<string, List<FunctionSymbol>> ExtensionFunctions { get; } = new();
     public Dictionary<string, List<PropertySymbol>> ExtensionProperties { get; } = new();
 
-    // Operator overloads declared directly on this type (`operator fun Add(...)` etc.), keyed
+    // Operator overloads declared directly on this type (`op fun +(...)` etc.), keyed
     // by the Operator they overload rather than by name — operators don't have one. Multiple
     // overloads of the same operator (different arity/parameter types) share a key, same as
     // overloaded Functions share a name.

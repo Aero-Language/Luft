@@ -64,7 +64,7 @@ public class LuftDocumentSymbolHandler(LuftCompilerService compiler) : DocumentS
             case FunctionDeclarationNode f:
                 return [Make(f.Name, $"({Params(f.Parameters)}) -> {f.ReturnType}", inType ? SymbolKind.Method : SymbolKind.Function, f.Span)];
             case OperatorDeclarationNode o:
-                return [Make($"operator {o.Op}", $"({Params(o.Parameters)}) -> {o.ReturnType}", SymbolKind.Operator, o.Span)];
+                return [Make($"op fun {o.Op.AsString()}", $"({Params(o.Parameters)}) -> {o.ReturnType}", SymbolKind.Operator, o.Span)];
             case ClassDeclarationNode c:
                 return [Make(c.Name, null, SymbolKind.Class, c.Span, Members(c.Declarations))];
             case StructDeclarationNode s:

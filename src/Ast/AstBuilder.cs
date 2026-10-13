@@ -117,8 +117,6 @@ public sealed class AstBuilder : SafeIterator<Token>
             "enum" => PopEnum(annotations, accessMod),
             "annotation" => PopAnnotationDecl(annotations, accessMod, memberMod),
             "fun" or "op" => PopFunction(annotations, accessMod, memberMod, inheritance),
-            // 'operator' is only a keyword when it directly precedes 'fun', so it stays usable as a name elsewhere
-            "operator" when Peek(1).Type is TokenType.InstanceKind && Peek(1).Value == "fun" => PopFunction(annotations, accessMod, memberMod, inheritance),
             "extension" => PopExtension(annotations, accessMod, memberMod, inheritance),
             "extensions" => PopExtensionBlock(accessMod),
             "constructor" => PopConstructor(annotations, accessMod),
@@ -173,6 +171,7 @@ public sealed class AstBuilder : SafeIterator<Token>
         ExpectInstance(["fun"], "Expected 'fun' keyword");
 
         string name;
+        Operator? opSymbol = null;
         if (isExtension)
         {
             // `extension fun Container<Int>.Sum()` or `extension fun Int.IsEven()`
@@ -199,12 +198,18 @@ public sealed class AstBuilder : SafeIterator<Token>
             receiver = target;
             name = $"{target.Name}.{memberName}";
         }
+        else if (isOp && Peek().Type.IsOperator())
+        {
+            // `op fun ==(...)`: the symbol itself names the operator
+            opSymbol = PopOperator();
+            name = opSymbol.Value.AsString();
+        }
         else
         {
             name = PopIdentifier();
         }
-        
-        var opString = isOp ? name.IdentifierParts().Last() : "";
+
+        var opString = isOp && opSymbol is null ? name.IdentifierParts().Last() : "";
         var generics = !isOp ? PopGenericDecls() : []; // operator overloads don't get their own generic parameter list
         var parameters = PopParameterDecl();
 
@@ -227,11 +232,11 @@ public sealed class AstBuilder : SafeIterator<Token>
 
         if (isOp)
         {
-            // The name after 'fun' is the Operator enum member it overloads: `operator fun Add(...)`
-            Operator opValue = default;
-            if (!(Enum.TryParse(opString, out opValue) && Enum.IsDefined(opValue)))
+            // After 'fun' comes the operator symbol (`op fun +(...)`), an Operator member name is still accepted
+            Operator opValue = opSymbol ?? default;
+            if (opSymbol is null && !(Enum.TryParse(opString, out opValue) && Enum.IsDefined(opValue)))
                 Error($"'{opString}' is not an overloadable operator", startSpan);
-            
+
             return new OperatorDeclarationNode(annotations.OrNew(), access, inheritance, memberMod, returning, name, opValue, parameters, body, startSpan.To(Peek().Span.End));
         }
         return new FunctionDeclarationNode(annotations.OrNew(), access, inheritance, memberMod, returning, name, generics.ToValueList(), parameters, body, startSpan.To(Peek().Span.End));
@@ -240,7 +245,7 @@ public sealed class AstBuilder : SafeIterator<Token>
     {
         var kind = Peek(1); // Peek() is 'extension', so check the next one
         
-        if (kind.Value is "fun" or "op" or "operator")
+        if (kind.Value is "fun" or "op")
         {
             var decl = PopFunction(annotations, accessMod, memberMod, inheritance, out var receiver);
             var name = decl switch
@@ -1400,13 +1405,8 @@ public sealed class AstBuilder : SafeIterator<Token>
             or TokenType.Eof);
     }
     
-    // `operator fun Add(...)` (or the lexer's own `op` keyword) — 'operator' is lexed as a plain
-    // identifier, so it only counts when it sits directly in front of 'fun'.
-    bool IsOperatorKeyword()
-    {
-        if (Peek().Type is TokenType.InstanceKind && Peek().Value == "op") return true;
-        return Peek().Value == "operator" && Peek(1).Type is TokenType.InstanceKind && Peek(1).Value == "fun";
-    }
+    // `op fun +(...)`
+    bool IsOperatorKeyword() => Peek().Type is TokenType.InstanceKind && Peek().Value == "op";
     
     // ---- Generic argument helpers -----------------------------------------
     bool IsCloseAngle() => Peek().Type is TokenType.GreaterThan or TokenType.RightShift;

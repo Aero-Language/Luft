@@ -88,6 +88,10 @@ public static class AstNav
             case SpawnExpressionNode sp: yield return sp.Body; break;
             case ScopedExpressionNode sc: yield return sc.Scoped; break;
             case RefExpressionNode rf: yield return rf.Operand; break;
+            case WithExpressionNode wi:
+                yield return wi.Source;
+                foreach (var f in wi.Fields) yield return f.Value;
+                break;
             case PatternTestExpressionNode pt: yield return pt.Target; yield return pt.Pattern; break;
         }
     }

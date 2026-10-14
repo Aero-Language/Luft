@@ -462,6 +462,7 @@ public class BodyResolver : AeroThrower
             UnaryExpressionNode u => ResolveUnary(u, scope, bScope),
             ScopedExpressionNode sc => ResolveExpression(sc.Scoped, scope, bScope),
             RefExpressionNode rf => ResolveRef(rf, scope, bScope),
+            WithExpressionNode wi => ResolveWith(wi, scope, bScope),
             PatternTestExpressionNode pt => ResolvePatternTest(pt, scope, bScope),
             IndexExpressionNode idx => ResolveIndex(idx, scope, bScope),
             RangeExpressionNode rg => ResolveRange(rg, scope, bScope),
@@ -670,6 +671,44 @@ public class BodyResolver : AeroThrower
             return Fail($"'ref' cannot be used on the class type '{operand}', classes are already references", expr.Span);
 
         return operand with { IsRef = true };
+    }
+
+    // `source with { Field = value }` copies a record and replaces the listed fields
+    private AeroType ResolveWith(WithExpressionNode expr, TypeScope scope, BodyScope bScope)
+    {
+        var source = ResolveExpression(expr.Source, scope, bScope);
+        var values = expr.Fields.Select(f => (Field: f, Type: ResolveExpression(f.Value, scope, bScope))).ToList();
+        if (source == AeroType.Error) return AeroType.Error;
+
+        if (FindType(source, scope, expr.Span.FilePath) is not RecordSymbol record || source.IsNullable)
+            return Fail($"'with' can only copy a record, '{source}' is not one", expr.Span);
+
+        var seen = new HashSet<string>();
+        foreach (var (field, type) in values)
+        {
+            if (!seen.Add(field.Name))
+            {
+                Error($"'{field.Name}' is assigned twice in the 'with' expression", field.Span);
+                continue;
+            }
+
+            var member = FindMember(record, field.Name, []);
+            if (member is null || member.IsStaticMember || member.Result is not ValueRes { Ref: FieldBinding or PropertyBinding } found)
+            {
+                Error($"'{record.Name}' has no instance field or property '{field.Name}' to replace", field.Span);
+                continue;
+            }
+
+            if (found.Ref is FieldBinding { Field.VarKind: VariableKind.Const })
+            {
+                Error($"'{field.Name}' is a constant and cannot be replaced", field.Span);
+                continue;
+            }
+
+            if (type != AeroType.Error) CheckTypes(type, found.Type, scope, field.Value.Span);
+        }
+
+        return source;
     }
 
     // Only an explicit 'ref' passes by reference, a ref parameter read by name is a plain value

@@ -145,3 +145,19 @@ public record RefExpressionNode
     ExpressionNode Operand,
     SourceSpan Span
 ) : ExpressionNode(Span);
+
+// One `Name = value` entry of a with expression
+public record WithFieldNode
+(
+    string Name,
+    ExpressionNode Value,
+    SourceSpan Span
+) : AstNode(Span);
+
+// `source with { Name = value, ... }`, a copy of a record with some fields replaced
+public record WithExpressionNode
+(
+    ExpressionNode Source,
+    ValueList<WithFieldNode> Fields,
+    SourceSpan Span
+) : ExpressionNode(Span);

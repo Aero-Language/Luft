@@ -1,4 +1,5 @@
 using LLVMSharp.Interop;
+using Luft.Ast.Nodes;
 using Luft.TypeChecker;
 using Luft.TypeChecker.Symbols;
 using Luft.Utility;
@@ -75,6 +76,38 @@ public sealed partial class FunctionEmitter
         }
 
         value = _builder.BuildCall2(declared.Type, declared.Value, arguments, "eq");
+        return true;
+    }
+
+    // A copy of the record value with the listed slots replaced, the source itself stays untouched
+    private bool TryLowerWith(WithExpressionNode expression, out LLVMValueRef value)
+    {
+        value = default;
+        var sourceType = _typed.TypeOf(expression.Source);
+        if (_types.SymbolOf(sourceType, _scope) is not RecordSymbol record)
+        {
+            Fail("'with' can only copy a record", expression.Span);
+            return false;
+        }
+
+        var layout = _types.LayoutOf(record, expression.Span);
+        if (layout is null || !TryLowerValue(expression.Source, out var copy)) return false;
+
+        foreach (var field in expression.Fields)
+        {
+            var slot = layout.Find(field.Name) ?? layout.Find($"<backing>{field.Name}");
+            if (slot is null)
+            {
+                Fail($"'{field.Name}' has no storage in '{record.Name}' to replace", field.Span);
+                return false;
+            }
+
+            if (!TryLowerValue(field.Value, out var replacement)) return false;
+            replacement = Coerce(replacement, _typed.TypeOf(field.Value), slot.Type, field.Value.Span);
+            copy = _builder.BuildInsertValue(copy, replacement, (uint)slot.Index, field.Name);
+        }
+
+        value = copy;
         return true;
     }
 }

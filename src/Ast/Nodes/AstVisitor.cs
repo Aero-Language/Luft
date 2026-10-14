@@ -64,6 +64,7 @@ public abstract class AstVisitor : AeroThrower
             case SpawnExpressionNode n: VisitSpawn(n); break;
             case ScopedExpressionNode n: VisitScoped(n); break;
             case RefExpressionNode n: VisitRef(n); break;
+            case WithExpressionNode n: VisitWith(n); break;
             case PatternTestExpressionNode n: VisitPatternTest(n); break;
             
             default: Default(node); break;
@@ -131,6 +132,7 @@ public abstract class AstVisitor : AeroThrower
     protected virtual void VisitSpawn(SpawnExpressionNode node) => Default(node);
     protected virtual void VisitScoped(ScopedExpressionNode node) => Default(node);
     protected virtual void VisitRef(RefExpressionNode node) => Default(node);
+    protected virtual void VisitWith(WithExpressionNode node) => Default(node);
     protected virtual void VisitPatternTest(PatternTestExpressionNode node) => Default(node);
 }
 
@@ -193,6 +195,7 @@ public abstract class AstVisitor<T> : AeroThrower
         SpawnExpressionNode n => VisitSpawn(n),
         ScopedExpressionNode n => VisitScoped(n),
         RefExpressionNode n => VisitRef(n),
+        WithExpressionNode n => VisitWith(n),
         PatternTestExpressionNode n => VisitPatternTest(n),
         
         _ => Default(node)
@@ -258,5 +261,6 @@ public abstract class AstVisitor<T> : AeroThrower
     protected virtual T VisitSpawn(SpawnExpressionNode node) => Default(node);
     protected virtual T VisitScoped(ScopedExpressionNode node) => Default(node);
     protected virtual T VisitRef(RefExpressionNode node) => Default(node);
+    protected virtual T VisitWith(WithExpressionNode node) => Default(node);
     protected virtual T VisitPatternTest(PatternTestExpressionNode node) => Default(node);
 }

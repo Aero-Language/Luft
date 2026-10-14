@@ -844,6 +844,10 @@ public sealed class AstBuilder : SafeIterator<Token>
             {
                 expr = PopIndex(expr);
             }
+            else if (tokenType is TokenType.Identifier && Peek().Value == "with" && Peek(1).Type is TokenType.BracketOpen)
+            {
+                expr = PopWith(expr);
+            }
             else
             {
                 break;
@@ -851,6 +855,28 @@ public sealed class AstBuilder : SafeIterator<Token>
         }
 
         return expr;
+    }
+    // `source with { Name = value, Other = value }`, 'with' stays a plain identifier everywhere else
+    WithExpressionNode PopWith(ExpressionNode source)
+    {
+        Pop(); // with
+        ExpectType(TokenType.BracketOpen, "Expected '{'");
+
+        var fields = new List<WithFieldNode>();
+        while (Peek().Type is not TokenType.BracketClose and not TokenType.Eof)
+        {
+            var before = Index;
+            var name = ExpectType(TokenType.Identifier, "Expected a field name");
+            ExpectType(TokenType.Assign, "Expected '=' after the field name");
+            var value = PopExpression();
+            fields.Add(new WithFieldNode(name.Value, value, name.Span.To(Peek(-1).Span)));
+
+            if (Peek().Type is TokenType.Comma or TokenType.Semicolon) Pop();
+            if (Index == before) Pop(); // safety net after an error
+        }
+
+        ExpectType(TokenType.BracketClose, "Expected '}'");
+        return new WithExpressionNode(source, fields.ToValueList(), source.Span.To(Peek(-1).Span));
     }
     ScopedExpressionNode PopScoped()
     {

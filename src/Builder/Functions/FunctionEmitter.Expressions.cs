@@ -35,6 +35,7 @@ public sealed partial class FunctionEmitter
             case RefExpressionNode r:
                 Fail("'ref' can only be used as a call argument", r.Span);
                 return false;
+            case WithExpressionNode w: return TryLowerWith(w, out value);
             case CallExpressionNode c: return TryLowerCall(c, out value);
             case BinaryExpressionNode b: return TryLowerBinary(b, out value);
             case UnaryExpressionNode u: return TryLowerUnary(u, out value);

@@ -518,6 +518,10 @@ public class PrettyPrinter(int indentAmount = 4, bool isLib = false) : PrinterBa
     {
         return $"ref {Visit(node.Operand)}";
     }
+    protected override string VisitWith(WithExpressionNode node)
+    {
+        return $"{Visit(node.Source)} with {{ {string.Join(", ", node.Fields.Select(f => $"{f.Name} = {Visit(f.Value)}"))} }}";
+    }
 
     #endregion
 }

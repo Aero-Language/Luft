@@ -24,9 +24,18 @@ public static class AstNav
                 break;
             case ExtensionDeclarationNode ex: yield return ex.Extension; break;
             case ExtensionBlockDeclarationNode eb: foreach (var e in eb.Extensions) yield return e; break;
-            case StructDeclarationNode st: foreach (var d in st.Declarations) yield return d; break;
-            case RecordDeclarationNode re: foreach (var d in re.Declarations) yield return d; break;
-            case ClassDeclarationNode cl: foreach (var d in cl.Declarations) yield return d; break;
+            case StructDeclarationNode st:
+                foreach (var d in st.Declarations) yield return d;
+                foreach (var a in st.BaseArguments ?? Enumerable.Empty<ExpressionNode>()) yield return a;
+                break;
+            case RecordDeclarationNode re:
+                foreach (var d in re.Declarations) yield return d;
+                foreach (var a in re.BaseArguments ?? Enumerable.Empty<ExpressionNode>()) yield return a;
+                break;
+            case ClassDeclarationNode cl:
+                foreach (var d in cl.Declarations) yield return d;
+                foreach (var a in cl.BaseArguments ?? Enumerable.Empty<ExpressionNode>()) yield return a;
+                break;
             case TraitDeclarationNode tr: foreach (var d in tr.Declarations) yield return d; break;
             case AnnotationDeclarationNode an: foreach (var d in an.Declarations) yield return d; break;
             case EnumDeclarationNode en: foreach (var m in en.Members) yield return m; break;
@@ -41,6 +50,7 @@ public static class AstNav
             case PrimaryConstructorDeclarationNode pc: foreach (var v in pc.Variables) yield return v; break;
             case ConstructorDeclarationNode co:
                 foreach (var p in co.Parameters) yield return p;
+                foreach (var a in co.BaseArguments ?? Enumerable.Empty<ExpressionNode>()) yield return a;
                 if (co.Body is not null) yield return co.Body;
                 break;
             case DestructorDeclarationNode de: if (de.Body is not null) yield return de.Body; break;

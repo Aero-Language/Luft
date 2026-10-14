@@ -15,6 +15,7 @@ public enum TokenType
     NullLiteral,
     ItLiteral,
     SelfLiteral,
+    BaseLiteral,
 
     // Identifiers
     Identifier, 

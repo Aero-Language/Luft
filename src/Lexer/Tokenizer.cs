@@ -472,6 +472,7 @@ public sealed class Tokenizer : SafeIterator<char>
         "null" => TokenType.NullLiteral,
         "it" => TokenType.ItLiteral,
         "self" => TokenType.SelfLiteral,
+        "base" => TokenType.BaseLiteral,
 
         // Variable & Access Modifiers
         "val" or "var" or "const" => TokenType.VariableKind,

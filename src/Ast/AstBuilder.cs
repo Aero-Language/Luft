@@ -308,7 +308,7 @@ public sealed class AstBuilder : SafeIterator<Token>
             decls.Add(PopPrimaryConstructor());
         }
 
-        var implementations = PopImplementations();
+        var implementations = PopImplementations(out var baseArguments);
 
         ExpectType(TokenType.BracketOpen, "Expect '{'");
         while (Peek().Type is not TokenType.BracketClose and not TokenType.Eof)
@@ -317,7 +317,7 @@ public sealed class AstBuilder : SafeIterator<Token>
         }
         ExpectType(TokenType.BracketClose, "Expect '}'");
         
-        return new StructDeclarationNode(annotations.OrNew(), access, inheritance, memberMod, name, generics, decls.ToValueList(), implementations, startSpan.To(Peek().Span));
+        return new StructDeclarationNode(annotations.OrNew(), access, inheritance, memberMod, name, generics, decls.ToValueList(), implementations, startSpan.To(Peek().Span)) { BaseArguments = baseArguments };
     }
     RecordDeclarationNode PopRecord(ValueList<AnnotationStatementNode>? annotations, AccessMod? accessMod, MemberMod memberMod, InheritanceMod inheritance)
     {
@@ -336,7 +336,7 @@ public sealed class AstBuilder : SafeIterator<Token>
             decls.Add(PopPrimaryConstructor());
         }
 
-        var implementations = PopImplementations();
+        var implementations = PopImplementations(out var baseArguments);
         
         ExpectType(TokenType.BracketOpen, "Expected '{'");
         while (Peek().Type is not TokenType.BracketClose and not TokenType.Eof)
@@ -345,7 +345,7 @@ public sealed class AstBuilder : SafeIterator<Token>
         }
         ExpectType(TokenType.BracketClose, "Expected '}'");
         
-        return new RecordDeclarationNode(annotations.OrNew(), access, inheritance, memberMod, name, generics, decls.ToValueList(), implementations, startSpan.To(Peek().Span));
+        return new RecordDeclarationNode(annotations.OrNew(), access, inheritance, memberMod, name, generics, decls.ToValueList(), implementations, startSpan.To(Peek().Span)) { BaseArguments = baseArguments };
     }
     AnnotationDeclarationNode PopAnnotationDecl(ValueList<AnnotationStatementNode>? annotations, AccessMod? accessMod, MemberMod memberMod)
     {
@@ -382,7 +382,7 @@ public sealed class AstBuilder : SafeIterator<Token>
             decls.AddRange(PopPrimaryConstructor());
         }
 
-        var implementations = PopImplementations();
+        var implementations = PopImplementations(out var baseArguments);
         
         ExpectType(TokenType.BracketOpen, "Expect '{'");
         while (Peek().Type is not TokenType.BracketClose and not TokenType.Eof)
@@ -391,7 +391,7 @@ public sealed class AstBuilder : SafeIterator<Token>
         }
         ExpectType(TokenType.BracketClose, "Expect '}'");
         
-        return new ClassDeclarationNode(annotations.OrNew(), access, inheritance, memberMod, name, generics, decls.ToValueList(), implementations, startSpan.To(Peek().Span));
+        return new ClassDeclarationNode(annotations.OrNew(), access, inheritance, memberMod, name, generics, decls.ToValueList(), implementations, startSpan.To(Peek().Span)) { BaseArguments = baseArguments };
     }
     TraitDeclarationNode PopTrait(ValueList<AnnotationStatementNode>? annotations, AccessMod? accessMod, InheritanceMod inheritance)
     {
@@ -595,9 +595,18 @@ public sealed class AstBuilder : SafeIterator<Token>
         var name = PopIdentifier();
         var parameters = PopParameterDecl();
 
+        // `: base(args)` runs the base constructor first
+        ValueList<ExpressionNode>? baseArguments = null;
+        if (Peek().Type is TokenType.Colon && Peek(1).Type is TokenType.BaseLiteral)
+        {
+            Pop();
+            Pop();
+            baseArguments = PopBaseArguments();
+        }
+
         BlockExpressionNode body = PopBlock();
         
-        return new ConstructorDeclarationNode(annotations.OrNew(), access, name, parameters, body, startSpan.To(Peek().Span.End));
+        return new ConstructorDeclarationNode(annotations.OrNew(), access, name, parameters, body, startSpan.To(Peek().Span.End)) { BaseArguments = baseArguments };
     }
     DestructorDeclarationNode PopDestructor(ValueList<AnnotationStatementNode>? annotations)
     {
@@ -807,6 +816,7 @@ public sealed class AstBuilder : SafeIterator<Token>
                 or TokenType.BooleanLiteral
                 or TokenType.NullLiteral
                 or TokenType.SelfLiteral
+                or TokenType.BaseLiteral
                 or TokenType.ItLiteral
                 or TokenType.SquareOpen:
                 return PopLiteral();
@@ -1123,7 +1133,7 @@ public sealed class AstBuilder : SafeIterator<Token>
             case TokenType.BooleanLiteral:
                 obj = token.Value == "true";
                 break;
-            case TokenType.SelfLiteral or TokenType.ItLiteral or TokenType.NullLiteral:
+            case TokenType.SelfLiteral or TokenType.BaseLiteral or TokenType.ItLiteral or TokenType.NullLiteral:
                 obj = token.Value;
                 break;
             case TokenType.SquareOpen:
@@ -1776,8 +1786,12 @@ public sealed class AstBuilder : SafeIterator<Token>
         
         return result.ToValueList();
     }
-    ValueList<AeroType> PopImplementations()
+    ValueList<AeroType> PopImplementations() => PopImplementations(out _);
+
+    // The first listed type may carry constructor arguments: `class Player(var Name: String) : Entity(Name), IPrintable`
+    ValueList<AeroType> PopImplementations(out ValueList<ExpressionNode>? baseArguments)
     {
+        baseArguments = null;
         List<AeroType> results = [];
         if (Peek().Type is TokenType.Colon)
         {
@@ -1787,6 +1801,7 @@ public sealed class AstBuilder : SafeIterator<Token>
             {
                 var before = Index;
                 results.Add(PopType());
+                if (results.Count == 1 && Peek().Type is TokenType.ParenthesisOpen) baseArguments = PopBaseArguments();
                 
                 // PopType reports an error without consuming when it sees a non-identifier;
                 // skip that token so this loop always makes progress.
@@ -1797,6 +1812,22 @@ public sealed class AstBuilder : SafeIterator<Token>
         }
 
         return results.ToValueList();
+    }
+    ValueList<ExpressionNode> PopBaseArguments()
+    {
+        ExpectType(TokenType.ParenthesisOpen, "Expected '('");
+
+        List<ExpressionNode> arguments = [];
+        while (Peek().Type is not TokenType.ParenthesisClose and not TokenType.Eof)
+        {
+            var before = Index;
+            arguments.Add(PopExpression());
+            if (Peek().Type is TokenType.Comma) Pop();
+            if (Index == before) Pop();
+        }
+
+        ExpectType(TokenType.ParenthesisClose, "Expected ')'");
+        return arguments.ToValueList();
     }
     ValueList<GenericParameterType> PopGenericDecls()
     {

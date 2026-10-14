@@ -56,7 +56,11 @@ public record StructDeclarationNode
     ValueList<DeclarationNode> Declarations,
     ValueList<AeroType> Implements,
     SourceSpan Span
-) : DeclarationNode(Span);
+) : DeclarationNode(Span)
+{
+    // Arguments of `: Base(args)` after the first listed type, null without a base constructor call
+    public ValueList<ExpressionNode>? BaseArguments { get; init; }
+}
 
 public record AnnotationDeclarationNode
 (
@@ -80,7 +84,11 @@ public record RecordDeclarationNode
     ValueList<DeclarationNode> Declarations,
     ValueList<AeroType> Implements,
     SourceSpan Span
-) : DeclarationNode(Span);
+) : DeclarationNode(Span)
+{
+    // Arguments of `: Base(args)` after the first listed type, null without a base constructor call
+    public ValueList<ExpressionNode>? BaseArguments { get; init; }
+}
 
 public record ClassDeclarationNode
 (
@@ -93,7 +101,11 @@ public record ClassDeclarationNode
     ValueList<DeclarationNode> Declarations,
     ValueList<AeroType> Implements,
     SourceSpan Span
-) : DeclarationNode(Span);
+) : DeclarationNode(Span)
+{
+    // Arguments of `: Base(args)` after the first listed type, null without a base constructor call
+    public ValueList<ExpressionNode>? BaseArguments { get; init; }
+}
 
 public record TraitDeclarationNode
 (
@@ -168,7 +180,11 @@ public record ConstructorDeclarationNode
     ValueList<ParamNode> Parameters,
     BlockExpressionNode? Body,
     SourceSpan Span
-) : DeclarationNode(Span);
+) : DeclarationNode(Span)
+{
+    // Arguments of `: base(args)`, null without a base constructor call
+    public ValueList<ExpressionNode>? BaseArguments { get; init; }
+}
 
 public record DestructorDeclarationNode
 (

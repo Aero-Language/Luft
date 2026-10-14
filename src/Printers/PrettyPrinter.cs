@@ -90,7 +90,7 @@ public class PrettyPrinter(int indentAmount = 4, bool isLib = false) : PrinterBa
         text += $"struct {node.Name}";
         if (node.GenericParameters.Any()) text += $"<{string.Join(", ", node.GenericParameters)}>";
         if (node.Declarations.Any(n => n is PrimaryConstructorDeclarationNode)) text += Visit(node.Declarations.OfType<PrimaryConstructorDeclarationNode>().First());
-        if (node.Implements.Any()) text += $": {string.Join(", ", node.Implements)}";
+        if (node.Implements.Any()) text += $": {string.Join(", ", node.Implements.Select((t, i) => i == 0 && node.BaseArguments is not null ? $"{t}({string.Join(", ", node.BaseArguments.Select(Visit))})" : t.ToString()))}";
 
         Incr();
         var body = string.Join("\n", node.Declarations.Where(n => n is not PrimaryConstructorDeclarationNode).Select(d => Indent(Visit(d))));
@@ -110,7 +110,7 @@ public class PrettyPrinter(int indentAmount = 4, bool isLib = false) : PrinterBa
         text += $"record {node.Name}";
         if (node.GenericParameters.Any()) text += $"<{string.Join(", ", node.GenericParameters)}>";
         if (node.Declarations.Any(n => n is PrimaryConstructorDeclarationNode)) text += Visit(node.Declarations.OfType<PrimaryConstructorDeclarationNode>().First());
-        if (node.Implements.Any()) text += $": {string.Join(", ", node.Implements)}";
+        if (node.Implements.Any()) text += $": {string.Join(", ", node.Implements.Select((t, i) => i == 0 && node.BaseArguments is not null ? $"{t}({string.Join(", ", node.BaseArguments.Select(Visit))})" : t.ToString()))}";
 
         Incr();
         var body = string.Join("\n", node.Declarations.Where(n => n is not PrimaryConstructorDeclarationNode).Select(d => Indent(Visit(d))));
@@ -148,7 +148,7 @@ public class PrettyPrinter(int indentAmount = 4, bool isLib = false) : PrinterBa
         text += $"class {node.Name}";
         if (node.GenericParameters.Any()) text += $"<{string.Join(", ", node.GenericParameters)}>";
         if (node.Declarations.Any(n => n is PrimaryConstructorDeclarationNode)) text += Visit(node.Declarations.OfType<PrimaryConstructorDeclarationNode>().First());
-        if (node.Implements.Any()) text += $": {string.Join(", ", node.Implements)}";
+        if (node.Implements.Any()) text += $": {string.Join(", ", node.Implements.Select((t, i) => i == 0 && node.BaseArguments is not null ? $"{t}({string.Join(", ", node.BaseArguments.Select(Visit))})" : t.ToString()))}";
 
         Incr();
         var body = string.Join("\n", node.Declarations.Where(n => n is not PrimaryConstructorDeclarationNode).Select(d => Indent(Visit(d))));
@@ -241,6 +241,7 @@ public class PrettyPrinter(int indentAmount = 4, bool isLib = false) : PrinterBa
         text += $"constructor {node.Name}";
 
         text += $"({string.Join(", ", node.Parameters.Select(Visit))})";
+        if (node.BaseArguments is not null) text += $" : base({string.Join(", ", node.BaseArguments.Select(Visit))})";
         
         if (node.Body is not null) text += $" {Visit(node.Body)}";
 
@@ -416,6 +417,7 @@ public class PrettyPrinter(int indentAmount = 4, bool isLib = false) : PrinterBa
             TokenType.BooleanLiteral when node.Value is bool b => b ? "true" : "false",
             TokenType.NullLiteral => "null",
             TokenType.SelfLiteral => "self",
+            TokenType.BaseLiteral => "base",
             TokenType.ItLiteral => "it",
             _ => node.Value.ToString() ?? throw new InvalidOperationException()
         };

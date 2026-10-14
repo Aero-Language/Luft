@@ -32,10 +32,10 @@ public sealed class Analyzer(Snapshot snap)
     static readonly string[] StatementKeywords =
     [
         "val", "var", "const", "if", "match", "while", "for", "break", "continue", "return", "yield",
-        "concurrent", "spawn", "self", "it", "true", "false", "null"
+        "concurrent", "spawn", "self", "base", "it", "true", "false", "null"
     ];
 
-    static readonly string[] ExprKeywords = ["self", "it", "true", "false", "null", "if", "match", "spawn", "concurrent"];
+    static readonly string[] ExprKeywords = ["self", "base", "it", "true", "false", "null", "if", "match", "spawn", "concurrent"];
 
     static readonly HashSet<TokenType> ExprPrev =
     [

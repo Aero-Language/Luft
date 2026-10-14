@@ -92,11 +92,71 @@ public class BodyResolver : AeroThrower
 
                 CheckScope(type.Scope);
                 if (type is RecordSymbol record) CheckRecordEquality(record);
+                CheckBaseCalls(type);
 
                 CurrentSelfType = previousSelf;
             }
         }
     }
+
+    // `: base(args)` of constructors and `: Base(args)` of the primary constructor have to match a constructor of the base type.
+    // A class whose base has no constructor without parameters has to name one.
+    private void CheckBaseCalls(TypeSymbol type)
+    {
+        if (type is not (ClassSymbol or StructSymbol or RecordSymbol)) return;
+
+        var baseType = BaseTypeOf(type);
+        (AstNode declaration, ValueList<ExpressionNode>? primaryArguments) = type switch
+        {
+            ClassSymbol c => (c.Node, c.Node.BaseArguments),
+            StructSymbol s => (s.Node, s.Node.BaseArguments),
+            RecordSymbol r => (r.Node, r.Node.BaseArguments),
+            _ => (null!, null)
+        };
+
+        if (primaryArguments is not null)
+        {
+            var scope = new BodyScope();
+            if (type.Scope.PrimaryConstructor is { } primary)
+                foreach (var v in primary.Variables) scope.TryAdd(new VariableSymbol(v.Name, v.Type, v.Span));
+
+            CheckBaseCall(type, baseType, primaryArguments, declaration, scope, type.Span);
+        }
+
+        foreach (var constructor in type.Scope.Constructors)
+        {
+            if (constructor.Declaration.BaseArguments is { } arguments)
+                CheckBaseCall(type, baseType, arguments, constructor.Declaration, ScopeFor(constructor.Declaration.Parameters), constructor.Span);
+            else if (type is ClassSymbol && baseType is { } b && !HasEmptyConstructor(b.Symbol))
+                Error($"'{b.Symbol.Name}' has no constructor without parameters, call one with ': base(...)'", constructor.Span);
+        }
+
+        if (type is ClassSymbol && type.Scope.Constructors.Count == 0 && primaryArguments is null && baseType is { } bt && !HasEmptyConstructor(bt.Symbol))
+            Error($"'{bt.Symbol.Name}' has no constructor without parameters, call one with ': {bt.Symbol.Name}(...)' after the class name", type.Span);
+    }
+
+    private void CheckBaseCall(TypeSymbol type, (AeroType Type, TypeSymbol Symbol)? baseType, ValueList<ExpressionNode> arguments, AstNode key, BodyScope bScope, SourceSpan span)
+    {
+        var argTypes = arguments.Select(a => ResolveExpression(a, type.Scope, bScope)).ToArray();
+
+        if (baseType is not { } found)
+        {
+            Error($"'{type.Name}' has no base type to pass arguments to", span);
+            return;
+        }
+
+        var generics = found.Symbol.GenericParameters.Select(g => g.Name).ToHashSet();
+        var matches = ConstructorsOf(found.Symbol).Where(c => ParametersMatch(c.Parameters, argTypes, generics)).ToList();
+
+        if (matches.Count == 1) Typed.Bindings[key] = new ConstructorBinding(found.Symbol, matches[0].Symbol);
+        else if (argTypes.All(a => a != AeroType.Error))
+            Error(matches.Count == 0
+                ? $"No constructor of '{found.Symbol.Name}' matches the given base arguments"
+                : $"The base constructor call is ambiguous between {matches.Count} constructors of '{found.Symbol.Name}'", span);
+    }
+
+    private static bool HasEmptyConstructor(TypeSymbol type)
+        => ConstructorsOf(type).Any(c => ParametersMatch(c.Parameters, [], type.GenericParameters.Select(g => g.Name).ToHashSet()));
 
     // A record's built in equality compares every instance field, inherited ones included, so each field has to be comparable
     private void CheckRecordEquality(RecordSymbol record)
@@ -454,7 +514,7 @@ public class BodyResolver : AeroThrower
             IfExpressionNode ifExpr => ResolveIf(ifExpr, scope, bScope),
             ForExpressionNode f => ResolveFor(f, scope, bScope),
             MatchExpressionNode m => ResolveMatch(m, scope, bScope),
-            LiteralExpressionNode l => ResolveLiteral(l),
+            LiteralExpressionNode l => ResolveLiteral(l, scope),
             ArrayLiteralExpressionNode al => ResolveArrayLiteral(al, scope, bScope),
             IdentifierExpressionNode or MemberAccessExpressionNode => ResolveValueName(expression, scope, bScope),
             CallExpressionNode c => ResolveCall(c, scope, bScope),
@@ -622,7 +682,7 @@ public class BodyResolver : AeroThrower
         CheckPattern(expr.Pattern, targetType, scope, bScope);
         return AeroType.Bool;
     }
-    private AeroType ResolveLiteral(LiteralExpressionNode expr)
+    private AeroType ResolveLiteral(LiteralExpressionNode expr, TypeScope scope)
     {
         return expr.LiteralType switch
         {
@@ -635,10 +695,40 @@ public class BodyResolver : AeroThrower
             
             TokenType.ItLiteral => CurrentItType ?? Fail("The 'it' literal can not be used here", expr.Span),
             TokenType.SelfLiteral => CurrentSelfType ?? Fail("The 'self' literal can not be used here", expr.Span),
+            TokenType.BaseLiteral => ResolveBase(expr, scope),
             
             _ => AeroType.Void
         };
     }
+    // 'base' is 'self' seen as the base class, so base.Method() names the inherited implementation
+    private AeroType ResolveBase(LiteralExpressionNode expr, TypeScope scope)
+    {
+        if (CurrentSelfType is null) return Fail("The 'base' literal can not be used here", expr.Span);
+
+        if (FindType(CurrentSelfType, scope, expr.Span.FilePath) is not { } owner || BaseTypeOf(owner) is not { } baseType)
+            return Fail("The 'base' literal needs a type with a base type", expr.Span);
+
+        return baseType.Type;
+    }
+
+    // The first listed type when it is a class, struct or record, the rest are traits
+    private (AeroType Type, TypeSymbol Symbol)? BaseTypeOf(TypeSymbol symbol)
+    {
+        IEnumerable<AeroType> listed = symbol switch
+        {
+            ClassSymbol c  => c.Node.Implements,
+            StructSymbol s => s.Node.Implements,
+            RecordSymbol r => r.Node.Implements,
+            _ => []
+        };
+
+        var first = listed.FirstOrDefault();
+        if (first is null) return null;
+
+        var found = FindType(first, symbol.Scope, symbol.Span.FilePath);
+        return found is ClassSymbol or StructSymbol or RecordSymbol ? (first, found) : null;
+    }
+
     private ArrayType ResolveArrayLiteral(ArrayLiteralExpressionNode expr, TypeScope scope, BodyScope bScope)
     {
         if (!expr.Elements.Any()) return new ArrayType(AeroType.Auto);
@@ -792,6 +882,9 @@ public class BodyResolver : AeroThrower
             matches = [exact];
 
         if (matches.Count == 1) Typed.Bindings[expr] = new FunctionBinding(matches[0].Fn, matches[0].Bound, fn.Substitute);
+        if (matches.Count == 1 && matches[0].Fn.InheritanceMod == InheritanceMod.Abstract
+            && expr.Target is MemberAccessExpressionNode { Target: LiteralExpressionNode { LiteralType: TokenType.BaseLiteral } })
+            return Fail($"'{matches[0].Fn.Name}' is abstract and has no implementation to call through 'base'", expr.Span);
         if (matches.Count == 0 && fn.Overloads.Count == 1 && ReportRefMismatch(fn.Overloads[0], expr, argTypes)) return AeroType.Error;
 
         return matches.Count switch

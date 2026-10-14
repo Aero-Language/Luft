@@ -189,6 +189,8 @@ public sealed class CodeGenerator : AeroThrower, IDisposable
             _functions[f] = new DeclaredFunction(value, type.Value, scope, owner, hasSelf);
         }
 
+        DeclareExtensionFunctions(scope, exported, symbols);
+        DeclareExtensionProperties(scope, exported, symbols);
         DeclareFields(scope, owner, path, exported, symbols);
         DeclareProperties(scope, owner, path, exported, symbols);
         if (owner is not null) DeclareOperators(scope, owner, path, exported, symbols);
@@ -336,7 +338,7 @@ public sealed class CodeGenerator : AeroThrower, IDisposable
     }
 
     // Only accessors with a body are functions, an automatic one reads or writes the backing value directly
-    private void DeclareAccessor(PropertySymbol p, bool isSetter, TypeScope scope, TypeSymbol? owner, string path, bool hasSelf, bool external, HashSet<string> symbols)
+    private void DeclareAccessor(PropertySymbol p, bool isSetter, TypeScope scope, TypeSymbol? owner, string path, bool hasSelf, bool external, HashSet<string> symbols, AeroType? receiver = null)
     {
         var accessor = isSetter ? p.Setter : p.Getter;
         if (accessor?.Body is null) return;
@@ -347,7 +349,8 @@ public sealed class CodeGenerator : AeroThrower, IDisposable
         // self comes first, as for every method
         if (hasSelf) type = LLVMTypeRef.CreateFunction(type.Value.ReturnType, new[] { _types.Ptr }.Concat(type.Value.ParamTypes).ToArray(), false);
 
-        var name = GlobalName($"{(isSetter ? "set" : "get")}_{p.Name}", path, external);
+        var memberName = receiver is null ? p.Name : $"{Sanitize(receiver.ToString()!)}_{p.Name.Split('.')[^1]}";
+        var name = GlobalName($"{(isSetter ? "set" : "get")}_{memberName}", path, external);
         if (!symbols.Add(name))
         {
             Error($"The symbol '{name}' is defined more than once.", p.Span);
@@ -358,7 +361,7 @@ public sealed class CodeGenerator : AeroThrower, IDisposable
         if (p.Access == AccessMod.Private) value.Linkage = LLVMLinkage.LLVMInternalLinkage;
         else if (!external) value.Visibility = LLVMVisibility.LLVMHiddenVisibility;
 
-        _members.Accessors[new AccessorKey(p, isSetter)] = new DeclaredFunction(value, type.Value, scope, owner, hasSelf);
+        _members.Accessors[new AccessorKey(p, isSetter)] = new DeclaredFunction(value, type.Value, scope, owner, hasSelf, receiver);
     }
 
     // Module_Type_Name when exported, a dotted name otherwise; the declaring module is the one DeclareFunctions is walking
@@ -423,6 +426,70 @@ public sealed class CodeGenerator : AeroThrower, IDisposable
         var name = prefix + f.Name;
 
         if (!scope.Functions.TryGetValue(f.Name, out var overloads) || overloads.Count <= 1) return name;
+
+        var suffix = string.Join("_", f.Parameters.Select(p => Sanitize(p.Type.ToString()!)));
+        return suffix.Length == 0 ? name : $"{name}_{suffix}";
+    }
+
+    // An extension is a function whose first parameter is a pointer to the receiver (the object itself for a class).
+    // Generic ones and ones with a generic target wait for the generics work.
+    private void DeclareExtensionFunctions(TypeScope scope, bool exported, HashSet<string> symbols)
+    {
+        foreach (var f in scope.ExtensionFunctions.Values.SelectMany(l => l))
+        {
+            if (f.GenericParameters.Count > 0 || f.ExtensionTarget is not { } target || target is GenericType || ContainsGeneric(target, scope)) continue;
+
+            var type = _types.LowerFunction(f.ReturnType, f.Parameters.Select(p => p.Type), scope, f.Span);
+            if (type is null) continue;
+
+            type = LLVMTypeRef.CreateFunction(type.Value.ReturnType, new[] { _types.Ptr }.Concat(type.Value.ParamTypes).ToArray(), false);
+
+            var external = f.Access == AccessMod.Public && exported;
+            var name = external ? ExportExtensionName(f, target, scope) : InternalName(f, "");
+            if (!symbols.Add(name))
+            {
+                Error($"The symbol '{name}' is defined more than once.", f.Span);
+                continue;
+            }
+
+            var value = Module.AddFunction(name, type.Value);
+            if (f.Access == AccessMod.Private) value.Linkage = LLVMLinkage.LLVMInternalLinkage;
+            else if (!external) value.Visibility = LLVMVisibility.LLVMHiddenVisibility;
+
+            var owner = _types.SymbolOf(target, scope) is ClassSymbol or StructSymbol or RecordSymbol ? _types.SymbolOf(target, scope) : null;
+            _functions[f] = new DeclaredFunction(value, type.Value, scope, owner, true, target);
+        }
+    }
+
+    // Extension properties have no storage, they are a getter and a setter taking the receiver like an extension function
+    private void DeclareExtensionProperties(TypeScope scope, bool exported, HashSet<string> symbols)
+    {
+        foreach (var p in scope.ExtensionProperties.Values.SelectMany(l => l))
+        {
+            if (p.ExtensionTarget is not { } target || target is GenericType || ContainsGeneric(target, scope)) continue;
+
+            var resolved = _types.SymbolOf(target, scope);
+            var owner = resolved is ClassSymbol or StructSymbol or RecordSymbol ? resolved : null;
+            var external = p.Access == AccessMod.Public && exported;
+
+            DeclareAccessor(p, false, scope, owner, "", true, external, symbols, target);
+            DeclareAccessor(p, true, scope, owner, "", true, external, symbols, target);
+        }
+    }
+
+    private static bool ContainsGeneric(AeroType type, TypeScope scope)
+    {
+        var generics = scope.AllGenerics().ToHashSet();
+        return type is ScalarType s && generics.Contains(s.Name) || type is ArrayType a && ContainsGeneric(a.ElementType, scope);
+    }
+
+    // Module_Target_Name, a different target keeps equal member names apart and only overloads get a parameter suffix
+    private static string ExportExtensionName(FunctionSymbol f, AeroType target, TypeScope scope)
+    {
+        var prefix = f.Module.ModulePath.Length == 0 ? "" : f.Module.ModulePath.Replace('.', '_') + "_";
+        var name = $"{prefix}{Sanitize(target.ToString()!)}_{f.Name.Split('.')[^1]}";
+
+        if (!scope.ExtensionFunctions.TryGetValue(f.Name, out var overloads) || overloads.Count <= 1) return name;
 
         var suffix = string.Join("_", f.Parameters.Select(p => Sanitize(p.Type.ToString()!)));
         return suffix.Length == 0 ? name : $"{name}_{suffix}";

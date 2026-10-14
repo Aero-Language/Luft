@@ -24,6 +24,15 @@ public sealed partial class FunctionEmitter
         value = _self;
         if (_selfOwner is ClassSymbol) return true;
 
+        // An extension on a primitive, a string or an array gets the receiver by address
+        if (_selfReceiver is not null && _selfOwner is null)
+        {
+            if (!_types.TryLower(_selfReceiver, _scope, span, out var receiverType)) return false;
+
+            value = _builder.BuildLoad2(receiverType, _self, "self");
+            return true;
+        }
+
         var layout = _types.LayoutOf(_selfOwner!, span);
         if (layout is null) return false;
 

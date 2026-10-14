@@ -1096,6 +1096,27 @@ public class BodyResolver : AeroThrower
         return result;
     }
 
+    // The extension property of that name visible from here whose target fits the receiver
+    private PropertySymbol? FindExtensionProperty(AeroType receiver, string name, TypeScope scope, string file)
+    {
+        PropertySymbol? Collect(TypeScope s)
+        {
+            foreach (var (key, list) in s.ExtensionProperties)
+                if (key.Split('.')[^1] == name && list.FirstOrDefault(p => p.ExtensionTarget is not null && TargetMatches(p.ExtensionTarget, receiver)) is { } found)
+                    return found;
+            return null;
+        }
+
+        for (var s = scope; s is not null; s = s.ContainingScope)
+            if (Collect(s) is { } local) return local;
+
+        foreach (var import in ImportsOf(file))
+            if (Table.Modules.TryGetValue(import.TargetPath, out var module) && Collect(module.Scope) is { } imported)
+                return imported;
+
+        return null;
+    }
+
     private static bool ArgsMatch(AeroType[] paramTypes, AeroType[] argTypes)
     {
         if (paramTypes.Length != argTypes.Length) return false;
@@ -1387,6 +1408,9 @@ public class BodyResolver : AeroThrower
                 var symbol = FindType(v.Type, scope, file);
                 if (symbol is null || FindMember(symbol, name, []) is null)
                 {
+                    if (FindExtensionProperty(v.Type, name, scope, file) is { } extensionProperty)
+                        return new ValueRes(extensionProperty.Type, new PropertyBinding(extensionProperty));
+
                     var extensions = FindExtensions(v.Type, name, scope, file);
                     if (extensions.Count > 0) return new FunctionsRes(extensions);
                 }

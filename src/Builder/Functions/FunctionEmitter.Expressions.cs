@@ -97,6 +97,8 @@ public sealed partial class FunctionEmitter
                 return true;
             case (TokenType.SelfLiteral, _) when _self.Handle != IntPtr.Zero:
                 return TryLowerSelf(l.Span, out value);
+            case (TokenType.ItLiteral, _) when _selfReceiver is not null && _self.Handle != IntPtr.Zero: // in an extension 'it' is the receiver too
+                return TryLowerSelf(l.Span, out value);
             default:
                 Fail($"The literal '{l.LiteralType}' is not lowered yet", l.Span);
                 return false;

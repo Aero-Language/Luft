@@ -7,7 +7,8 @@ using Luft.Utility;
 namespace Luft.Builder;
 
 // Owner is the type a method belongs to, null for module level functions. A method with HasSelf takes the self pointer as its first parameter.
-public sealed record DeclaredFunction(LLVMValueRef Value, LLVMTypeRef Type, TypeScope Scope, TypeSymbol? Owner = null, bool HasSelf = false);
+// Receiver is the target type of an extension, whose self is a pointer to the receiver value (the object itself for a class)
+public sealed record DeclaredFunction(LLVMValueRef Value, LLVMTypeRef Type, TypeScope Scope, TypeSymbol? Owner = null, bool HasSelf = false, AeroType? Receiver = null);
 
 // Lowers one function body. Statements live here, expressions in FunctionEmitter.Expressions.cs.
 public sealed partial class FunctionEmitter : AeroThrower, IDisposable
@@ -32,6 +33,7 @@ public sealed partial class FunctionEmitter : AeroThrower, IDisposable
     private LLVMValueRef _function;
     private LLVMValueRef _self; // the self pointer, unset outside instance methods
     private TypeSymbol? _selfOwner;
+    private AeroType? _selfReceiver; // set inside an extension, the type self stands for
     private LLVMValueRef _backing; // inside an accessor, where 'it' lives; unset elsewhere
     private LLVMTypeRef _backingType;
     private AeroType _backingAeroType = AeroType.Error;
@@ -83,6 +85,7 @@ public sealed partial class FunctionEmitter : AeroThrower, IDisposable
             _self = _function.GetParam(0);
             _self.Name = "self";
             _selfOwner = declared.Owner;
+            _selfReceiver = declared.Receiver;
             offset = 1;
         }
 

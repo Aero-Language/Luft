@@ -45,7 +45,7 @@ public sealed partial class FunctionEmitter
         {
             var targetType = _typed.TypeOf(member.Target);
             owner = targetType is null ? null : _types.SymbolOf(targetType, _scope);
-            if (owner is null)
+            if (owner is null && property.ExtensionTarget is null)
             {
                 Fail($"The type of the object holding '{property.Name}' is unknown", expression.Span);
                 return false;
@@ -57,7 +57,7 @@ public sealed partial class FunctionEmitter
                 return false;
             }
 
-            return TryLowerObject(member.Target, owner, out pointer);
+            return TryLowerObject(member.Target, owner!, out pointer);
         }
 
         if (_self.Handle == IntPtr.Zero || _selfOwner is null)
@@ -131,6 +131,12 @@ public sealed partial class FunctionEmitter
             return true;
         }
 
+        if (property.ExtensionTarget is not null)
+        {
+            Fail($"The extension property '{property.Name}' has no getter body, extensions cannot store a value", expression.Span);
+            return false;
+        }
+
         if (!TryBackingAddress(property, owner, pointer, expression.Span, out var address, out var type)) return false;
 
         value = _builder.BuildLoad2(type, address, property.Name);
@@ -164,6 +170,12 @@ public sealed partial class FunctionEmitter
             var arguments = IsGlobalProperty(property) ? new[] { coerced } : new[] { pointer, coerced };
             _builder.BuildCall2(setter.Type, setter.Value, arguments, "");
             return true;
+        }
+
+        if (property.ExtensionTarget is not null)
+        {
+            Fail($"The extension property '{property.Name}' has no setter body, extensions cannot store a value", span);
+            return false;
         }
 
         if (!TryBackingAddress(property, owner, pointer, span, out var address, out _)) return false;
@@ -226,14 +238,15 @@ public sealed partial class FunctionEmitter
             _self = _function.GetParam(0);
             _self.Name = "self";
             _selfOwner = declared.Owner;
+            _selfReceiver = declared.Receiver;
             offset = 1;
         }
 
         _entry = _context.AppendBasicBlock(_function, "entry");
         _builder.PositionAtEnd(_entry);
 
-        // 'it' is the backing value, which only exists when the property needs storage
-        if (_types.NeedsBacking(property))
+        // 'it' is the backing value, which only exists when the property needs storage; in an extension it is the receiver
+        if (property.ExtensionTarget is null && _types.NeedsBacking(property))
         {
             if (!TryBackingAddress(property, _selfOwner, _self, property.Span, out _backing, out _backingType)) return;
             _backingAeroType = property.Type;

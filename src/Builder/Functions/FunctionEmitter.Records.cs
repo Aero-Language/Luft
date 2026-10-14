@@ -96,11 +96,7 @@ public sealed partial class FunctionEmitter
         foreach (var field in expression.Fields)
         {
             var slot = layout.Find(field.Name) ?? layout.Find($"<backing>{field.Name}");
-            if (slot is null)
-            {
-                Fail($"'{field.Name}' has no storage in '{record.Name}' to replace", field.Span);
-                return false;
-            }
+            if (slot is null) continue; // a computed property has no storage, it is skipped
 
             if (!TryLowerValue(field.Value, out var replacement)) return false;
             replacement = Coerce(replacement, _typed.TypeOf(field.Value), slot.Type, field.Value.Span);

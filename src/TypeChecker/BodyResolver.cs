@@ -232,7 +232,7 @@ public class BodyResolver : AeroThrower
 
             if (field.Initializer is not null)
             {
-                CheckTypes(ResolveExpression(field.Initializer, scope, new()), field.Type, scope, field.Span);
+                CheckTypes(ResolveExpecting(field.Initializer, field.Type, scope, new()), field.Type, scope, field.Span);
             }
         }
     }
@@ -390,12 +390,12 @@ public class BodyResolver : AeroThrower
             switch (statement)
             {
                 case VariableStatementNode v:
-                    var initType = v.Initializer is not null ? ResolveExpression(v.Initializer, scope, bScope) : AeroType.Void;
+                    var initType = v.Initializer is not null ? ResolveExpecting(v.Initializer, v.Type, scope, bScope) : AeroType.Void;
                     var varType = v.Type.IsAuto ? initType : v.Type;
                     if (!Declare(bScope, new VariableSymbol(v, varType), v)) Error("Variable already defined", v.Span);
                     break;
                 case ReturnStatementNode r:
-                    var returned = r.Value is null ? AeroType.Void : ResolveExpression(r.Value, scope, bScope);
+                    var returned = r.Value is null ? AeroType.Void : ResolveExpecting(r.Value, expectedReturn, scope, bScope);
                     CheckTypes(returned, expectedReturn, scope, r.Span);
                     break;
                 case ContinueStatementNode or BreakStatementNode:
@@ -481,7 +481,10 @@ public class BodyResolver : AeroThrower
     private void ResolveAssignment(AssignmentStatementNode a, TypeScope scope, BodyScope bScope)
     {
         var targetType = ResolveExpression(a.Target, scope, bScope);
-        var valueType = ResolveExpression(a.Value, scope, bScope);
+        var valueType = ResolveExpecting(a.Value, targetType, scope, bScope);
+
+        if (StripScopes(a.Target) is IdentifierExpressionNode && Typed.BindingOf(StripScopes(a.Target)) is LocalBinding { Variable: var assigned } && IsCaptured(assigned, bScope))
+            Error($"'{assigned.Name}' is captured by a lambda, which works on a copy, so it cannot be assigned inside it", a.Span);
 
         if (a.Operator is Operator.Assign)
         {
@@ -810,6 +813,9 @@ public class BodyResolver : AeroThrower
     private AeroType[] ResolveArguments(CallExpressionNode expr, TypeScope scope, BodyScope bScope)
         => expr.Arguments.Select(a =>
         {
+            // A lambda without parameter types waits for the parameter it is passed to, so it can learn them from there
+            if (IsDeferredLambda(a)) return AeroType.Auto;
+
             var type = ResolveExpression(a, scope, bScope);
             return a is RefExpressionNode || type == AeroType.Error ? type : type with { IsRef = false };
         }).ToArray();
@@ -838,7 +844,7 @@ public class BodyResolver : AeroThrower
         // Calling a stored lambda value (e.g. a field/variable typed as a lambda type)
         if (target is ValueRes { Type: LambdaType lambda })
         {
-            var lambdaArgs = expr.Arguments.Select(a => ResolveExpression(a, scope, bScope)).ToArray();
+            var lambdaArgs = expr.Arguments.Select((a, i) => ResolveExpecting(a, i < lambda.Parameters.Count ? lambda.Parameters[i].Type : null, scope, bScope)).ToArray();
             var lambdaParamTypes = lambda.Parameters.Select(p => p.Type).ToArray();
 
             if (!ArgsMatch(lambdaParamTypes, lambdaArgs))
@@ -887,6 +893,8 @@ public class BodyResolver : AeroThrower
             matches = [exact];
 
         if (matches.Count == 1) Typed.Bindings[expr] = new FunctionBinding(matches[0].Fn, matches[0].Bound, fn.Substitute);
+        if (matches.Count == 1)
+            FinishLambdaArguments(expr, SubstParams(matches[0].Fn.Parameters, fn.Substitute), matches[0].Fn.GenericParameters.Select(g => g.Name).ToHashSet(), matches[0].Bound, argTypes, scope, bScope);
         if (matches.Count == 1 && matches[0].Fn.InheritanceMod == InheritanceMod.Abstract
             && expr.Target is MemberAccessExpressionNode { Target: LiteralExpressionNode { LiteralType: TokenType.BaseLiteral } })
             return Fail($"'{matches[0].Fn.Name}' is abstract and has no implementation to call through 'base'", expr.Span);
@@ -911,7 +919,11 @@ public class BodyResolver : AeroThrower
         var generics = type.GenericParameters.Select(g => g.Name).ToHashSet();
         var matches = ConstructorsOf(type).Where(c => ParametersMatch(c.Parameters, argTypes, generics)).ToList();
 
-        if (matches.Count == 1) Typed.Bindings[expr] = new ConstructorBinding(type, matches[0].Symbol);
+        if (matches.Count == 1)
+        {
+            Typed.Bindings[expr] = new ConstructorBinding(type, matches[0].Symbol);
+            FinishLambdaArguments(expr, matches[0].Parameters, generics, new(), argTypes, scope, bScope);
+        }
 
         return matches.Count switch
         {
@@ -1276,6 +1288,10 @@ public class BodyResolver : AeroThrower
         var operand = ResolveExpression(expr.Operand, scope, bScope);
         if (operand == AeroType.Error) return AeroType.Error;
 
+        if (expr.Operator is Operator.Increment or Operator.Decrement && StripScopes(expr.Operand) is IdentifierExpressionNode
+            && Typed.BindingOf(StripScopes(expr.Operand)) is LocalBinding { Variable: var stepped } && IsCaptured(stepped, bScope))
+            Error($"'{stepped.Name}' is captured by a lambda, which works on a copy, so it cannot be changed inside it", expr.Span);
+
         // A unary overload is `op fun -() -> Vector2`, or `static op fun -(v: Vector2)` in its static form
         if (TryOperatorOverload(expr.Operator, operand, [], scope, expr.Span.FilePath) is { } overload)
         {
@@ -1321,36 +1337,131 @@ public class BodyResolver : AeroThrower
         foreach (var part in expr.Parts) ResolveExpression(part, scope, bScope);
         return AeroType.String;
     }
-    private LambdaType ResolveLambda(LambdaExpressionNode expr, TypeScope scope, BodyScope bScope)
+    private sealed record LambdaFrame(BodyScope Scope, List<VariableSymbol> Captures);
+    private readonly List<LambdaFrame> _lambdas = [];
+
+    private static ExpressionNode StripScopes(ExpressionNode expression)
+    {
+        while (expression is ScopedExpressionNode s) expression = s.Scoped;
+        return expression;
+    }
+
+    // A lambda that leaves parameter types out, or names none and may use 'it', takes them from where it is passed
+    private static bool IsDeferredLambda(ExpressionNode argument)
+        => StripScopes(argument) is LambdaExpressionNode lambda && (lambda.Parameters.Count == 0 || lambda.Parameters.Any(p => p.Type.IsAuto));
+
+    // Resolves an expression whose target type is known, a lambda reads its parameter types from it
+    private AeroType ResolveExpecting(ExpressionNode expression, AeroType? expected, TypeScope scope, BodyScope bScope)
+    {
+        if (StripScopes(expression) is LambdaExpressionNode lambda && expected is LambdaType expectedLambda)
+        {
+            var type = ResolveLambda(lambda, scope, bScope, expectedLambda);
+            Typed.Types[lambda] = type;
+            Typed.Types[expression] = type;
+            return type;
+        }
+
+        return ResolveExpression(expression, scope, bScope);
+    }
+
+    // The lambdas ResolveArguments held back, now that the parameter list they go to is known; what they return may bind generics too
+    private void FinishLambdaArguments(CallExpressionNode call, ValueList<ParamSymbol> parameters, ICollection<string> generics,
+        Dictionary<string, AeroType> bound, AeroType[] argTypes, TypeScope scope, BodyScope bScope)
+    {
+        var any = false;
+        for (var i = 0; i < call.Arguments.Count; i++)
+        {
+            if (!IsDeferredLambda(call.Arguments[i])) continue;
+
+            var expected = i < parameters.Count ? Subst(parameters[i].Type, bound) : null;
+            argTypes[i] = ResolveExpecting(call.Arguments[i], expected, scope, bScope);
+            any = true;
+        }
+
+        if (any) ParametersMatch(parameters, argTypes, generics, bound);
+    }
+
+    private static bool MentionsGeneric(AeroType type, ICollection<string> generics) => type switch
+    {
+        ScalarType s => generics.Contains(s.Name),
+        ArrayType a => MentionsGeneric(a.ElementType, generics),
+        GenericType g => g.TypeArguments.Any(a => MentionsGeneric(a, generics)),
+        LambdaType l => MentionsGeneric(l.ReturnType, generics) || l.Parameters.Any(p => MentionsGeneric(p.Type, generics)),
+        _ => false
+    };
+
+    private void NoteCapture(VariableSymbol variable, BodyScope current)
+    {
+        foreach (var frame in _lambdas)
+            if (!DeclaredWithin(variable, current, frame.Scope) && !frame.Captures.Contains(variable)) frame.Captures.Add(variable);
+    }
+
+    private bool IsCaptured(VariableSymbol variable, BodyScope current)
+        => _lambdas.Any(frame => !DeclaredWithin(variable, current, frame.Scope));
+
+    // True when the variable lives in a scope between `current` and the lambda's own scope, so it is not captured from outside
+    private static bool DeclaredWithin(VariableSymbol variable, BodyScope current, BodyScope boundary)
+    {
+        for (var s = current; s is not null; s = s.Parent)
+        {
+            if (s.Variables.TryGetValue(variable.Name, out var found) && ReferenceEquals(found, variable)) return true;
+            if (ReferenceEquals(s, boundary)) break;
+        }
+        return false;
+    }
+
+    private LambdaType ResolveLambda(LambdaExpressionNode expr, TypeScope scope, BodyScope bScope, LambdaType? expected = null)
     {
         var lambdaScope = new BodyScope(bScope);
-        foreach (var p in expr.Parameters)
+        var parameters = new List<TypeParam>();
+        for (var i = 0; i < expr.Parameters.Count; i++)
         {
-            if (!Declare(lambdaScope, new VariableSymbol(p), p))
+            var p = expr.Parameters[i];
+            var type = p.Type.IsAuto && expected is not null && i < expected.Parameters.Count ? expected.Parameters[i].Type : p.Type;
+
+            if (!Declare(lambdaScope, new VariableSymbol(p.Name, type, p.Span), p))
                 Error("Parameter already defined", p.Span);
+            parameters.Add(new TypeParam(p.Name, type));
         }
 
         var previousIt = CurrentItType;
         // 'it' is the implicit name for a single unnamed parameter: `{ System.Log(it) }`. The
         // moment a parameter is actually named (`{ x: Int -> ... }`), that name takes over and
-        // 'it' is cancelled — hence the count check rather than "count == 1".
-        // Note: this doesn't yet infer 'it's real type from the call site's expected lambda
-        // signature (that needs the call/argument being matched, which ResolveLambda doesn't see) —
-        // it stands in as Auto for now, so 'it' is usable but not yet type-checked against its use.
-        CurrentItType = expr.Parameters.Count == 0 ? AeroType.Auto : null;
+        // 'it' is cancelled. Where the lambda is passed to a one parameter lambda type, 'it' is that
+        // parameter, otherwise it stays Auto and is not checked against its use.
+        if (expr.Parameters.Count == 0 && expected is { Parameters.Count: 1 })
+        {
+            CurrentItType = expected.Parameters[0].Type;
+            parameters.Add(new TypeParam("it", CurrentItType));
+        }
+        else CurrentItType = expr.Parameters.Count == 0 ? AeroType.Auto : null;
 
         // break/continue can't reach through a lambda boundary into an outer loop.
         var wasInLoop = InLoop;
         InLoop = false;
 
-        var returnType = ResolveBlock(expr.Body, scope, lambdaScope);
+        var frame = new LambdaFrame(lambdaScope, []);
+        _lambdas.Add(frame);
+        var bodyType = ResolveBlock(expr.Body, scope, lambdaScope);
+        _lambdas.RemoveAt(_lambdas.Count - 1);
+        Typed.Captures[expr] = frame.Captures;
 
         InLoop = wasInLoop;
         CurrentItType = previousIt;
 
-        var paramTypes = expr.Parameters.Select(p => new TypeParam(p.Name, p.Type)).ToValueList();
+        // With a known target the result type is the target's, as long as the body fits it
+        var returnType = bodyType;
+        if (expected is not null && !expected.ReturnType.IsAuto)
+        {
+            var generics = scope.AllGenerics().ToHashSet();
+            if (!MentionsGeneric(expected.ReturnType, generics))
+            {
+                if (expected.ReturnType != AeroType.Void) CheckTypes(bodyType, expected.ReturnType, scope, expr.Span);
+                returnType = expected.ReturnType;
+            }
+        }
 
-        return new LambdaType(paramTypes, returnType);
+        return new LambdaType(parameters.ToValueList(), returnType);
     }
 
     private Resolved ResolveIdentifier(IdentifierExpressionNode expr, TypeScope scope, BodyScope bScope)
@@ -1358,7 +1469,11 @@ public class BodyResolver : AeroThrower
         var name = expr.Name;
         var file = expr.Span.FilePath;
         
-        if (bScope.Get(name) is { } local) return new ValueRes(local.Type, new LocalBinding(local));
+        if (bScope.Get(name) is { } local)
+        {
+            NoteCapture(local, bScope);
+            return new ValueRes(local.Type, new LocalBinding(local));
+        }
         
         for (var s = scope; s is not null; s = s.ContainingScope)
             if (LookupInScope(s, name) is { } found) return found;

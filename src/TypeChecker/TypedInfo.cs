@@ -34,6 +34,9 @@ public sealed class TypedInfo
     public Dictionary<AstNode, AeroType> Types { get; } = new(ReferenceEqualityComparer.Instance);
     public Dictionary<AstNode, Binding> Bindings { get; } = new(ReferenceEqualityComparer.Instance);
 
+    // The variables of the enclosing function a lambda uses, in order of first use; a closure copies them
+    public Dictionary<AstNode, List<VariableSymbol>> Captures { get; } = new(ReferenceEqualityComparer.Instance);
+
     public AeroType? TypeOf(AstNode node) => Types.GetValueOrDefault(node);
     public Binding? BindingOf(AstNode node) => Bindings.GetValueOrDefault(node);
 }

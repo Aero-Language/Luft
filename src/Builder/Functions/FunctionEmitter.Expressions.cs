@@ -226,7 +226,7 @@ public sealed partial class FunctionEmitter
 
         // A virtual method on a class goes through the vtable of the object it is called on
         var callee = declared.Value;
-        if (declared.Owner is ClassSymbol && _members.VirtualSlots.TryGetValue(function, out var slot))
+        if (declared.Owner is ClassSymbol && !IsBaseCall(call) && _members.VirtualSlots.TryGetValue(function, out var slot))
             callee = LoadVirtualFunction(receiver, slot);
 
         var isVoid = function.ReturnType == AeroType.Void;

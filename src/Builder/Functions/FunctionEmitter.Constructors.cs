@@ -32,12 +32,16 @@ public sealed partial class FunctionEmitter
             var declarations = key.Symbol!.Declaration.Parameters;
             for (var i = 0; i < declarations.Count; i++) BindParameter(declarations[i], _function.GetParam((uint)i + 1));
         }
+        else if (key.Kind == ConstructorKind.Primary && BaseDeclarationOf(key.Type).Arguments is not null)
+            BindPrimaryArguments(key.Type, parameters);
 
         // Fields that arrive as arguments are not initialized twice
         var argumentFields = key.Kind is ConstructorKind.Primary or ConstructorKind.Fields
             ? parameters.Select(p => p.Name).ToHashSet()
             : new HashSet<string>();
 
+        // The base constructor fills in the inherited part first, then this type's own initializers run
+        if (!TryCallBaseConstructor(key)) return;
         if (!InitializeFields(key, layout, argumentFields)) return;
 
         switch (key.Kind)
@@ -53,12 +57,105 @@ public sealed partial class FunctionEmitter
         if (!IsTerminated()) _builder.BuildRetVoid();
     }
 
-    // Field initializers run before the body, base types first. The fields in argumentFields come from the arguments instead.
+    // The `: Base(args)` of a type's declaration with the node the checker bound it on
+    private static (AstNode? Node, ValueList<ExpressionNode>? Arguments) BaseDeclarationOf(TypeSymbol type) => type switch
+    {
+        ClassSymbol c => (c.Node, c.Node.BaseArguments),
+        StructSymbol s => (s.Node, s.Node.BaseArguments),
+        RecordSymbol r => (r.Node, r.Node.BaseArguments),
+        _ => (null, null)
+    };
+
+    // The arguments of a primary constructor are plain locals while the base constructor call is lowered
+    private void BindPrimaryArguments(TypeSymbol type, ValueList<ParamSymbol> parameters)
+    {
+        var variables = type.Scope.PrimaryConstructor!.Variables;
+        for (var i = 0; i < variables.Count && i < parameters.Count; i++)
+        {
+            if (_typed.BindingOf(variables[i]) is not LocalBinding { Variable: var variable }) continue;
+            if (!_types.TryLower(parameters[i].Type, _scope, variables[i].Span, out var valueType)) return;
+
+            var argument = _function.GetParam((uint)i + 1);
+            argument.Name = parameters[i].Name;
+
+            var slot = EntryAlloca(valueType, parameters[i].Name);
+            _builder.BuildStore(argument, slot);
+            _locals[variable] = new LocalSlot(slot, valueType);
+        }
+    }
+
+    // Runs the base type's constructor on the same object: the one named by `: base(...)`, otherwise one that needs no arguments
+    private bool TryCallBaseConstructor(ConstructorKey key)
+    {
+        var baseType = _types.BaseOf(key.Type);
+        if (baseType is null) return true;
+
+        var span = key.Symbol?.Span ?? key.Type.Span;
+        var baseLayout = _types.LayoutOf(baseType, span);
+        if (baseLayout is null) return false;
+
+        ValueList<ExpressionNode>? arguments = null;
+        ConstructorSymbol? named = null;
+        var resolved = false;
+
+        if (key.Kind == ConstructorKind.Explicit)
+        {
+            arguments = key.Symbol!.Declaration.BaseArguments;
+            if (_typed.BindingOf(key.Symbol.Declaration) is ConstructorBinding explicitBinding) (named, resolved) = (explicitBinding.Constructor, true);
+        }
+        else if (key.Kind == ConstructorKind.Primary)
+        {
+            var (node, primaryArguments) = BaseDeclarationOf(key.Type);
+            arguments = primaryArguments;
+            if (node is not null && _typed.BindingOf(node) is ConstructorBinding primaryBinding) (named, resolved) = (primaryBinding.Constructor, true);
+        }
+
+        var shapes = ConstructorShapes.Of(baseType, baseLayout);
+        ConstructorKey baseKey;
+        if (arguments is not null)
+        {
+            if (!resolved)
+            {
+                Fail($"The base constructor call of '{key.Type.Name}' was not resolved", span);
+                return false;
+            }
+            baseKey = ConstructorShapes.Select(baseType, named, arguments.Count);
+        }
+        else
+        {
+            var implicitShape = shapes.FirstOrDefault(s => s.Parameters.All(p => p.Initializer is not null));
+            if (implicitShape.Parameters is null)
+            {
+                Fail($"'{baseType.Name}' has no constructor without parameters to run before '{key.Type.Name}'", span);
+                return false;
+            }
+            baseKey = implicitShape.Key;
+        }
+
+        if (!_constructors.TryGetValue(baseKey, out var declared))
+        {
+            Fail($"The constructor of '{baseType.Name}' cannot be called yet, only non generic types can", span);
+            return false;
+        }
+
+        var parameters = shapes.First(s => s.Key == baseKey).Parameters;
+        var values = new List<LLVMValueRef> { _self };
+        for (var i = 0; i < parameters.Count; i++)
+        {
+            var source = arguments is not null && i < arguments.Count ? arguments[i] : parameters[i].Initializer;
+            if (!TryLowerArgument(source, parameters[i].Type, parameters[i].Name, span, out var value)) return false;
+            values.Add(value);
+        }
+
+        _builder.BuildCall2(declared.Type, declared.Value, values.ToArray(), "");
+        return true;
+    }
+
+    // Field initializers run before the body, base types are already done by their own constructor.
+    // The fields in argumentFields come from the arguments instead.
     private bool InitializeFields(ConstructorKey key, TypeLayout layout, HashSet<string> argumentFields)
     {
-        var chain = new List<TypeSymbol>();
-        for (TypeSymbol? link = key.Type; link is not null && !chain.Contains(link); link = _types.BaseOf(link)) chain.Add(link);
-        chain.Reverse();
+        var chain = new List<TypeSymbol> { key.Type };
 
         foreach (var type in chain)
         {

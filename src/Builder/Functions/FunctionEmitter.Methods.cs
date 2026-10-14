@@ -31,6 +31,15 @@ public sealed partial class FunctionEmitter
         return true;
     }
 
+    // `base.Method()` names the inherited implementation, so it never goes through the vtable
+    private static bool IsBaseCall(CallExpressionNode call)
+    {
+        var target = call.Target;
+        while (target is ScopedExpressionNode s) target = s.Scoped;
+
+        return target is MemberAccessExpressionNode { Target: LiteralExpressionNode { LiteralType: TokenType.BaseLiteral } };
+    }
+
     // The self argument of a call: `obj.Method()` uses obj, a bare `Method()` inside a method reuses the current self
     private bool TryLowerReceiver(CallExpressionNode call, TypeSymbol owner, out LLVMValueRef receiver)
     {
@@ -59,7 +68,7 @@ public sealed partial class FunctionEmitter
 
         while (expression is ScopedExpressionNode s) expression = s.Scoped;
 
-        if (expression is LiteralExpressionNode { LiteralType: TokenType.SelfLiteral } && _self.Handle != IntPtr.Zero)
+        if (expression is LiteralExpressionNode { LiteralType: TokenType.SelfLiteral or TokenType.BaseLiteral } && _self.Handle != IntPtr.Zero)
         {
             pointer = _self;
             return true;
@@ -84,7 +93,7 @@ public sealed partial class FunctionEmitter
         {
             case IndexExpressionNode:
                 return true;
-            case LiteralExpressionNode { LiteralType: TokenType.SelfLiteral }:
+            case LiteralExpressionNode { LiteralType: TokenType.SelfLiteral or TokenType.BaseLiteral }:
                 return _self.Handle != IntPtr.Zero;
             case IdentifierExpressionNode when _typed.BindingOf(expression) is LocalBinding { Variable: var variable }:
                 return _locals.ContainsKey(variable);

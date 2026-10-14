@@ -118,7 +118,12 @@ public class BodyResolver : AeroThrower
         {
             var scope = new BodyScope();
             if (type.Scope.PrimaryConstructor is { } primary)
-                foreach (var v in primary.Variables) scope.TryAdd(new VariableSymbol(v.Name, v.Type, v.Span));
+                foreach (var v in primary.Variables)
+                {
+                    var variable = new VariableSymbol(v.Name, v.Type, v.Span);
+                    scope.TryAdd(variable);
+                    Typed.Bindings[v] = new LocalBinding(variable); // codegen binds the constructor argument to it
+                }
 
             CheckBaseCall(type, baseType, primaryArguments, declaration, scope, type.Span);
         }

@@ -151,6 +151,9 @@ public sealed partial class FunctionEmitter
             return false;
         }
 
+        if (op is Operator.Equality or Operator.Inequality && leftType == rightType && _types.SymbolOf(leftType, _scope) is RecordSymbol record)
+            return TryEmitRecordEquality(op, record, left, right, span, out value);
+
         if (op is Operator.Equality or Operator.Inequality && IsKind(leftType, AeroType.String) && IsKind(rightType, AeroType.String))
         {
             value = BuildStringEquality(op, left, right);

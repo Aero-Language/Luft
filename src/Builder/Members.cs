@@ -36,6 +36,13 @@ public sealed class MemberTable
     // Per class: the vtable stored in each new object and the function that runs its destructor and its bases'
     public Dictionary<TypeSymbol, LLVMValueRef> VTables { get; } = new();
     public Dictionary<TypeSymbol, DeclaredFunction> Destroyers { get; } = new();
+
+    // Per trait the methods a vtable lists (inherited traits first) and each method's position in it
+    public Dictionary<TraitSymbol, List<FunctionSymbol>> TraitMethods { get; } = new();
+    public Dictionary<(TraitSymbol Trait, FunctionSymbol Method), int> TraitSlots { get; } = new();
+
+    // The vtable a class, struct or record hands out when it is used as a trait
+    public Dictionary<(TypeSymbol Type, TraitSymbol Trait), LLVMValueRef> TraitVTables { get; } = new();
 }
 
 public sealed record VirtualSlot(string Key, FunctionSymbol Implementation);

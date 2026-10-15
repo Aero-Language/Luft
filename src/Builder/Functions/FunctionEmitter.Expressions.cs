@@ -202,6 +202,11 @@ public sealed partial class FunctionEmitter
     {
         value = default;
 
+        // A method called on a trait value is looked up in the vtable
+        var traitOk = TryLowerTraitCall(call, function, out var isTraitCall, out value);
+        if (isTraitCall) return traitOk;
+        if (!traitOk) return false;
+
         if (!_functions.TryGetValue(function, out var declared))
         {
             Fail($"'{function.Name}' cannot be called yet, only non generic module functions can", call.Span);
@@ -358,6 +363,8 @@ public sealed partial class FunctionEmitter
     // Wraps into a nullable where the target needs it, everything else already matches
     private LLVMValueRef Coerce(LLVMValueRef value, AeroType? from, AeroType to, SourceSpan span)
     {
+        if (from is not null && value.Handle != IntPtr.Zero && TryConvertToTrait(value, from, to, span, out var asTrait)) return asTrait;
+
         if (from is null || value.Handle == IntPtr.Zero || !to.IsNullable || to.IsRef) return value;
         if (!_types.TryLower(to, _scope, span, out var lowered)) return value;
 

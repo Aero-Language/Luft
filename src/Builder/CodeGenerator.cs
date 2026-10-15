@@ -20,6 +20,8 @@ public sealed class CodeGenerator : AeroThrower, IDisposable
     private LLVMValueRef _staticInit; // unset when there is nothing to initialize
     private ModuleSymbol? _declaringModule;
     private readonly List<(ClassSymbol Type, string Path, ModuleSymbol Module)> _classes = new();
+    private readonly List<(TypeSymbol Type, string Path, ModuleSymbol Module)> _valueTypes = new();
+    private readonly List<(TraitSymbol Trait, string Path, ModuleSymbol Module)> _traits = new();
     private readonly Dictionary<string, LLVMValueRef> _strings = new();
     private TypeLowering _types = null!;
 
@@ -59,6 +61,7 @@ public sealed class CodeGenerator : AeroThrower, IDisposable
         if (_types.HasErrors) return false;
 
         DeclareVTables();
+        DeclareTraitVTables();
 
         var failed = false;
         foreach (var (symbol, declared) in _functions)
@@ -197,10 +200,15 @@ public sealed class CodeGenerator : AeroThrower, IDisposable
 
         foreach (var symbol in scope.Types.Values.SelectMany(l => l))
         {
+            if (symbol is TraitSymbol trait && trait.GenericParameters.Count == 0)
+                DeclareTrait(trait, path.Length == 0 ? trait.Name : $"{path}.{trait.Name}", exported && trait.Access == AccessMod.Public, symbols);
+
             if (symbol is not (ClassSymbol or StructSymbol or RecordSymbol) || symbol.GenericParameters.Count > 0) continue;
 
             var nested = path.Length == 0 ? symbol.Name : $"{path}.{symbol.Name}";
             var nestedExported = exported && symbol.Access == AccessMod.Public;
+
+            _valueTypes.Add((symbol, nested, _declaringModule!));
 
             if (symbol is ClassSymbol classSymbol) _classes.Add((classSymbol, nested, _declaringModule!));
 
@@ -240,6 +248,164 @@ public sealed class CodeGenerator : AeroThrower, IDisposable
 
             _members.VTables[type] = table;
         }
+    }
+
+    // A default method is a function taking a pointer to the trait value as self; methods without a body are only listed in the vtable
+    private void DeclareTrait(TraitSymbol trait, string path, bool exported, HashSet<string> symbols)
+    {
+        _traits.Add((trait, path, _declaringModule!));
+
+        foreach (var f in trait.Scope.Functions.Values.SelectMany(l => l))
+        {
+            if (f.Body is null || f.GenericParameters.Count > 0 || f.MemberMods.HasFlag(MemberMod.Static)) continue;
+
+            var type = _types.LowerFunction(f.ReturnType, f.Parameters.Select(p => p.Type), trait.Scope, f.Span);
+            if (type is null) continue;
+
+            type = LLVMTypeRef.CreateFunction(type.Value.ReturnType, new[] { _types.Ptr }.Concat(type.Value.ParamTypes).ToArray(), false);
+
+            var external = f.Access == AccessMod.Public && exported;
+            var name = external ? ExportName(f, trait.Scope, path) : InternalName(f, path);
+            if (!symbols.Add(name))
+            {
+                Error($"The symbol '{name}' is defined more than once.", f.Span);
+                continue;
+            }
+
+            var value = Module.AddFunction(name, type.Value);
+            if (f.Access == AccessMod.Private) value.Linkage = LLVMLinkage.LLVMInternalLinkage;
+            else if (!external) value.Visibility = LLVMVisibility.LLVMHiddenVisibility;
+
+            _functions[f] = new DeclaredFunction(value, type.Value, trait.Scope, null, true, new ScalarType(trait.Name));
+        }
+    }
+
+    private static IEnumerable<AeroType> ListedTypesOf(TypeSymbol type) => type switch
+    {
+        ClassSymbol c => c.Node.Implements,
+        StructSymbol s => s.Node.Implements,
+        RecordSymbol r => r.Node.Implements,
+        TraitSymbol t => t.Node.Traits,
+        _ => []
+    };
+
+    // The traits a trait inherits from, then the trait itself: the order the vtable lists their methods in
+    private void CollectTraitMethods(TraitSymbol trait, List<FunctionSymbol> methods, HashSet<TraitSymbol> seen)
+    {
+        if (!seen.Add(trait)) return;
+
+        foreach (var listed in ListedTypesOf(trait))
+            if (_types.SymbolOf(listed, trait.Scope) is TraitSymbol baseTrait && baseTrait.GenericParameters.Count == 0) CollectTraitMethods(baseTrait, methods, seen);
+
+        methods.AddRange(trait.Scope.Functions.Values.SelectMany(l => l)
+            .Where(f => f.GenericParameters.Count == 0 && !f.MemberMods.HasFlag(MemberMod.Static))
+            .OrderBy(f => f.Span.Start));
+    }
+
+    // Every non generic trait a type implements, through its base types and the traits' own bases
+    private List<TraitSymbol> TraitsOf(TypeSymbol type)
+    {
+        var result = new List<TraitSymbol>();
+
+        void Add(TraitSymbol trait)
+        {
+            if (result.Contains(trait)) return;
+            result.Add(trait);
+            foreach (var listed in ListedTypesOf(trait))
+                if (_types.SymbolOf(listed, trait.Scope) is TraitSymbol baseTrait && baseTrait.GenericParameters.Count == 0) Add(baseTrait);
+        }
+
+        for (var link = type; link is not null && !result.Contains(link as TraitSymbol!); link = _types.BaseOf(link))
+            foreach (var listed in ListedTypesOf(link))
+                if (_types.SymbolOf(listed, link.Scope) is TraitSymbol trait && trait.GenericParameters.Count == 0) Add(trait);
+
+        return result;
+    }
+
+    private static string SignatureOf(FunctionSymbol f) => $"{f.Name}({string.Join(",", f.Parameters.Select(p => p.Type))})";
+
+    // One constant table per type and trait it implements: the function behind every method of the trait, taking the data pointer as self
+    private void DeclareTraitVTables()
+    {
+        foreach (var (trait, _, _) in _traits)
+        {
+            var methods = new List<FunctionSymbol>();
+            CollectTraitMethods(trait, methods, new HashSet<TraitSymbol>());
+
+            _members.TraitMethods[trait] = methods;
+            for (var i = 0; i < methods.Count; i++) _members.TraitSlots[(trait, methods[i])] = i;
+        }
+
+        var tables = new List<(TypeSymbol Type, TraitSymbol Trait, string Path, ModuleSymbol Module, LLVMValueRef Table)>();
+        foreach (var (type, path, module) in _valueTypes)
+        {
+            foreach (var trait in TraitsOf(type))
+            {
+                if (!_members.TraitMethods.TryGetValue(trait, out var methods)) continue;
+
+                var table = Module.AddGlobal(LLVMTypeRef.CreateArray(_types.Ptr, (uint)methods.Count), $"{QualifiedName(module, path)}.<trait:{trait.Name}>");
+                table.Linkage = LLVMLinkage.LLVMInternalLinkage;
+                table.IsGlobalConstant = true;
+
+                _members.TraitVTables[(type, trait)] = table;
+                tables.Add((type, trait, path, module, table));
+            }
+        }
+
+        // Filled once every table exists, a default method's thunk refers to the table of its own type
+        foreach (var (type, trait, path, module, table) in tables)
+        {
+            var entries = new List<LLVMValueRef>();
+            foreach (var method in _members.TraitMethods[trait])
+                entries.Add(EntryFor(type, trait, method, path, module, table));
+
+            table.Initializer = LLVMValueRef.CreateConstArray(_types.Ptr, entries.ToArray());
+        }
+    }
+
+    // The type's own method with the same name and parameters, searched up its base types; the trait's default otherwise
+    private LLVMValueRef EntryFor(TypeSymbol type, TraitSymbol trait, FunctionSymbol method, string path, ModuleSymbol module, LLVMValueRef table)
+    {
+        var signature = SignatureOf(method);
+        for (var link = type; link is not null; link = _types.BaseOf(link))
+        {
+            var found = link.Scope.Functions.Values.SelectMany(l => l)
+                .FirstOrDefault(f => !f.MemberMods.HasFlag(MemberMod.Static) && f.GenericParameters.Count == 0 && SignatureOf(f) == signature && f.Body is not null);
+
+            if (found is not null && _functions.TryGetValue(found, out var implementation)) return implementation.Value;
+        }
+
+        if (method.Body is null || !_functions.TryGetValue(method, out var fallback))
+        {
+            Error($"'{type.Name}' does not implement '{method.Name}' of the trait '{trait.Name}'", type.Span);
+            return LLVMValueRef.CreateConstPointerNull(_types.Ptr);
+        }
+
+        return DefaultThunk(type, trait, fallback, table, path, module);
+    }
+
+    // The slot of a default method receives the data pointer, so the thunk wraps it into the trait value the default body expects
+    private LLVMValueRef DefaultThunk(TypeSymbol type, TraitSymbol trait, DeclaredFunction fallback, LLVMValueRef table, string path, ModuleSymbol module)
+    {
+        var original = fallback.Type;
+        var thunk = Module.AddFunction($"{QualifiedName(module, path)}.<default:{trait.Name}.{fallback.Value.Name}>", original);
+        thunk.Linkage = LLVMLinkage.LLVMInternalLinkage;
+
+        using var b = _context.CreateBuilder();
+        b.PositionAtEnd(_context.AppendBasicBlock(thunk, "entry"));
+
+        var reference = b.BuildAlloca(_types.TraitStruct, "trait");
+        b.BuildStore(thunk.GetParam(0), b.BuildStructGEP2(_types.TraitStruct, reference, 0, "data"));
+        b.BuildStore(table, b.BuildStructGEP2(_types.TraitStruct, reference, 1, "vtable"));
+
+        var arguments = new List<LLVMValueRef> { reference };
+        for (var i = 1u; i < original.ParamTypesCount; i++) arguments.Add(thunk.GetParam(i));
+
+        var isVoid = original.ReturnType.Kind == LLVMTypeKind.LLVMVoidTypeKind;
+        var call = b.BuildCall2(original, fallback.Value, arguments.ToArray(), isVoid ? "" : "call");
+        if (isVoid) b.BuildRetVoid();
+        else b.BuildRet(call);
+        return thunk;
     }
 
     private static string QualifiedName(ModuleSymbol module, string path)

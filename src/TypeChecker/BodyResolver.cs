@@ -160,7 +160,7 @@ public class BodyResolver : AeroThrower
                 : $"The base constructor call is ambiguous between {matches.Count} constructors of '{found.Symbol.Name}'", span);
     }
 
-    private static bool HasEmptyConstructor(TypeSymbol type)
+    private bool HasEmptyConstructor(TypeSymbol type)
         => ConstructorsOf(type).Any(c => ParametersMatch(c.Parameters, [], type.GenericParameters.Select(g => g.Name).ToHashSet()));
 
     // A record's built in equality compares every instance field, inherited ones included, so each field has to be comparable
@@ -438,7 +438,7 @@ public class BodyResolver : AeroThrower
     }
 
     // A constructed generic type has <auto> arguments (the call carries none), so those match anything
-    private static bool IsAssignable(AeroType from, AeroType to)
+    private bool IsAssignable(AeroType from, AeroType to)
     {
         if (from == to || from.IsAuto || to.IsAuto) return true;
         if (from is ArrayType fa && to is ArrayType ta) return IsAssignable(fa.ElementType, ta.ElementType);
@@ -459,7 +459,56 @@ public class BodyResolver : AeroThrower
             return f.TypeArguments.Zip(t.TypeArguments).All(p => p.First.Name == AeroType.Auto.Name || p.First == p.Second);
         }
 
+        // A class fits its base classes and every trait it implements, a struct or record only the traits (it would be cut down otherwise)
+        if (from is ScalarType fromScalar && to is ScalarType toScalar && fromScalar.Name != toScalar.Name && (!fromScalar.IsNullable || toScalar.IsNullable)
+            && FindTypeAnywhere(fromScalar.Name) is { } source && FindTypeAnywhere(toScalar.Name) is { } target
+            && (target is TraitSymbol || (source is ClassSymbol && target is ClassSymbol)))
+            return IsSubtypeOf(source, target, []);
+
         return false;
+    }
+
+    private bool IsSubtypeOf(TypeSymbol type, TypeSymbol target, HashSet<TypeSymbol> seen)
+    {
+        if (!seen.Add(type)) return false;
+
+        foreach (var baseType in BasesOf(type))
+            if (baseType == target || IsSubtypeOf(baseType, target, seen)) return true;
+
+        return false;
+    }
+
+    private readonly Dictionary<string, TypeSymbol?> _anyTypes = new();
+
+    // A type by its plain or dotted name from any module, only used to compare two types that are not declared next to each other
+    private TypeSymbol? FindTypeAnywhere(string name)
+    {
+        if (_anyTypes.TryGetValue(name, out var cached)) return cached;
+
+        var parts = name.Split('.');
+        var plain = parts[^1];
+        var modulePath = string.Join('.', parts[..^1]);
+
+        TypeSymbol? Search(TypeScope scope)
+        {
+            if (scope.Types.TryGetValue(plain, out var found) && found.Count > 0) return found[0];
+            foreach (var nested in scope.Types.Values.SelectMany(l => l))
+                if (Search(nested.Scope) is { } inner) return inner;
+            return null;
+        }
+
+        TypeSymbol? result = null;
+        foreach (var (path, module) in Table.Modules)
+        {
+            if (modulePath.Length > 0 && path != modulePath) continue;
+            if (Search(module.Scope) is { } hit)
+            {
+                result = hit;
+                break;
+            }
+        }
+
+        return _anyTypes[name] = result;
     }
 
     // Maps each compound-assignment operator to the plain binary operator it stands in for.
@@ -969,7 +1018,7 @@ public class BodyResolver : AeroThrower
 
     // True if `argTypes` could be passed positionally to `parameters` — arity (accounting
     // for parameters that have a default initializer) plus per-position type equality.
-    private static bool ParametersMatch(ValueList<ParamSymbol> parameters, AeroType[] argTypes, ICollection<string>? generics = null, Dictionary<string, AeroType>? bound = null)
+    private bool ParametersMatch(ValueList<ParamSymbol> parameters, AeroType[] argTypes, ICollection<string>? generics = null, Dictionary<string, AeroType>? bound = null)
     {
         generics ??= Array.Empty<string>();
         bound ??= new();
@@ -992,7 +1041,7 @@ public class BodyResolver : AeroThrower
     }
 
     // Matches an argument against a parameter type; generic parameters bind to what they meet
-    private static bool Unify(AeroType param, AeroType arg, ICollection<string> generics, Dictionary<string, AeroType> bound)
+    private bool Unify(AeroType param, AeroType arg, ICollection<string> generics, Dictionary<string, AeroType> bound)
     {
         if (arg == AeroType.Error) return true;
 
@@ -1129,7 +1178,7 @@ public class BodyResolver : AeroThrower
         return null;
     }
 
-    private static bool ArgsMatch(AeroType[] paramTypes, AeroType[] argTypes)
+    private bool ArgsMatch(AeroType[] paramTypes, AeroType[] argTypes)
     {
         if (paramTypes.Length != argTypes.Length) return false;
         for (int i = 0; i < argTypes.Length; i++)

@@ -85,6 +85,38 @@ public sealed class TypeLowering : AeroThrower
     // The generic arguments of the function instance being emitted, applied to every type that gets lowered
     public IReadOnlyDictionary<string, AeroType>? Substitution { get; set; }
 
+    // Types the arguments of the instance being emitted name, resolved at the call site where the function's own scope may not see them
+    public IReadOnlyDictionary<string, TypeSymbol>? Pinned { get; set; }
+
+    // Resolves every named type inside the arguments in the scope of the call, so the instance can find them again later
+    public Dictionary<string, TypeSymbol> Pin(IEnumerable<AeroType> arguments, TypeScope scope)
+    {
+        var pins = new Dictionary<string, TypeSymbol>();
+        foreach (var argument in arguments) Collect(argument, scope, pins);
+        return pins;
+    }
+
+    private void Collect(AeroType type, TypeScope scope, Dictionary<string, TypeSymbol> pins)
+    {
+        switch (type)
+        {
+            case ScalarType s:
+                var name = s.Name[(s.Name.LastIndexOf('.') + 1)..];
+                if (!pins.ContainsKey(name) && Find(name, scope, 0) is { } symbol) pins[name] = symbol;
+                break;
+            case ArrayType a:
+                Collect(a.ElementType, scope, pins);
+                break;
+            case LambdaType l:
+                Collect(l.ReturnType, scope, pins);
+                foreach (var p in l.Parameters) Collect(p.Type, scope, pins);
+                break;
+            case GenericType g:
+                foreach (var a in g.TypeArguments) Collect(a, scope, pins);
+                break;
+        }
+    }
+
     // Reports and returns false when the type can't be lowered
     public bool TryLower(AeroType type, TypeScope scope, SourceSpan span, out LLVMTypeRef result)
     {
@@ -379,6 +411,8 @@ public sealed class TypeLowering : AeroThrower
     private TypeSymbol? Find(string name, TypeScope scope, int arity)
     {
         name = name[(name.LastIndexOf('.') + 1)..];
+
+        if (arity == 0 && Pinned is not null && Pinned.TryGetValue(name, out var pinned)) return pinned;
 
         for (var s = scope; s is not null; s = s.ContainingScope)
             if (Match(s, name, arity) is { } hit) return hit;

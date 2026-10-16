@@ -7,7 +7,7 @@ using Luft.Utility;
 namespace Luft.Builder;
 
 // Declares (once) and returns the instance of a generic function for the given type arguments, null after reporting an error
-public delegate DeclaredFunction? InstantiateFunction(FunctionSymbol function, IReadOnlyDictionary<string, AeroType> arguments, SourceSpan span);
+public delegate DeclaredFunction? InstantiateFunction(FunctionSymbol function, IReadOnlyDictionary<string, AeroType> arguments, TypeScope callerScope, SourceSpan span);
 
 // Owner is the type a method belongs to, null for module level functions. A method with HasSelf takes the self pointer as its first parameter.
 // Receiver is the target type of an extension, whose self is a pointer to the receiver value (the object itself for a class)
@@ -75,13 +75,19 @@ public sealed partial class FunctionEmitter : AeroThrower, IDisposable
     public void Emit(FunctionSymbol symbol, DeclaredFunction declared)
         => EmitBody(declared, symbol.Declaration.Parameters, symbol.Body, symbol.ReturnType);
 
-    public void EmitInstance(FunctionSymbol symbol, DeclaredFunction declared, IReadOnlyDictionary<string, AeroType> arguments)
+    public void EmitInstance(FunctionSymbol symbol, DeclaredFunction declared, IReadOnlyDictionary<string, AeroType> arguments, IReadOnlyDictionary<string, TypeSymbol> pins)
     {
         var previous = _types.Substitution;
+        var previousPins = _types.Pinned;
         _substitution = arguments;
         _types.Substitution = arguments;
+        _types.Pinned = pins;
         try { EmitBody(declared, symbol.Declaration.Parameters, symbol.Body, Subst(symbol.ReturnType)); }
-        finally { _types.Substitution = previous; }
+        finally
+        {
+            _types.Substitution = previous;
+            _types.Pinned = previousPins;
+        }
     }
 
     private AeroType Subst(AeroType type) => TypeSubstitution.Apply(type, _substitution);

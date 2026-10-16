@@ -261,7 +261,7 @@ public sealed partial class FunctionEmitter
         }
 
         bound = binding.TypeArguments.ToDictionary(p => p.Key, p => Subst(p.Value));
-        var instance = _instantiate(function, bound, node.Span);
+        var instance = _instantiate(function, bound, _scope, node.Span);
         if (instance is null)
         {
             HasErrors = true; // reported by the generator

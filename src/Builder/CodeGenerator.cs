@@ -18,7 +18,7 @@ public sealed class CodeGenerator : AeroThrower, IDisposable
     private readonly Dictionary<ConstructorKey, DeclaredFunction> _constructors = new();
     private readonly Dictionary<FunctionSymbol, GenericTemplate> _templates = new(ReferenceEqualityComparer.Instance);
     private readonly Dictionary<FunctionSymbol, Dictionary<string, DeclaredFunction>> _instances = new(ReferenceEqualityComparer.Instance);
-    private readonly Queue<(FunctionSymbol Function, DeclaredFunction Declared, Dictionary<string, AeroType> Arguments)> _pending = new();
+    private readonly Queue<(FunctionSymbol Function, DeclaredFunction Declared, Dictionary<string, AeroType> Arguments, Dictionary<string, TypeSymbol> Pins)> _pending = new();
     private const int MaxInstances = 2000;
     private int _instanceCount;
 
@@ -161,7 +161,7 @@ public sealed class CodeGenerator : AeroThrower, IDisposable
     }
 
     // Declares the instance of a generic function for these type arguments once and queues its body
-    private DeclaredFunction? Instantiate(FunctionSymbol function, IReadOnlyDictionary<string, AeroType> arguments, SourceSpan span)
+    private DeclaredFunction? Instantiate(FunctionSymbol function, IReadOnlyDictionary<string, AeroType> arguments, TypeScope callerScope, SourceSpan span)
     {
         if (!_templates.TryGetValue(function, out var template))
         {
@@ -190,11 +190,20 @@ public sealed class CodeGenerator : AeroThrower, IDisposable
             return null;
         }
 
+        // Named types are looked up where the call is, the generic function's own scope may not see them
+        var pins = _types.Pin(map.Values, callerScope);
+
         var previous = _types.Substitution;
+        var previousPins = _types.Pinned;
         _types.Substitution = map;
+        _types.Pinned = pins;
         LLVMTypeRef? type;
         try { type = _types.LowerFunction(function.ReturnType, function.Parameters.Select(p => p.Type), template.Scope, function.Span); }
-        finally { _types.Substitution = previous; }
+        finally
+        {
+            _types.Substitution = previous;
+            _types.Pinned = previousPins;
+        }
         if (type is null) return null;
 
         if (template.HasSelf) type = LLVMTypeRef.CreateFunction(type.Value.ReturnType, new[] { _types.Ptr }.Concat(type.Value.ParamTypes).ToArray(), false);
@@ -205,7 +214,7 @@ public sealed class CodeGenerator : AeroThrower, IDisposable
 
         var declared = new DeclaredFunction(value, type.Value, template.Scope, template.Owner, template.HasSelf);
         known[key] = declared;
-        _pending.Enqueue((function, declared, map));
+        _pending.Enqueue((function, declared, map, pins));
         return declared;
     }
 
@@ -215,9 +224,9 @@ public sealed class CodeGenerator : AeroThrower, IDisposable
         var ok = true;
         while (_pending.Count > 0)
         {
-            var (function, declared, arguments) = _pending.Dequeue();
+            var (function, declared, arguments, pins) = _pending.Dequeue();
             using var emitter = CreateEmitter();
-            emitter.EmitInstance(function, declared, arguments);
+            emitter.EmitInstance(function, declared, arguments, pins);
             ok &= !emitter.HasErrors;
         }
         return ok;

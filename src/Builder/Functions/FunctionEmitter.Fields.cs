@@ -59,7 +59,7 @@ public sealed partial class FunctionEmitter
 
         if (expression is MemberAccessExpressionNode member)
         {
-            var targetType = _typed.TypeOf(member.Target);
+            var targetType = TypeOf(member.Target);
             owner = targetType is null ? null : _types.SymbolOf(targetType, _scope);
             if (owner is null)
             {

@@ -11,8 +11,8 @@ public sealed partial class FunctionEmitter
     {
         value = default;
 
-        var target = _typed.TypeOf(b);
-        var source = _typed.TypeOf(b.Right);
+        var target = TypeOf(b);
+        var source = TypeOf(b.Right);
         if (target is null || source is null)
         {
             Fail("The cast was not resolved", b.Span);

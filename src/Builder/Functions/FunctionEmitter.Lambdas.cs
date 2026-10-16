@@ -16,7 +16,7 @@ public sealed partial class FunctionEmitter
     {
         value = default;
 
-        if (_typed.TypeOf(lambda) is not LambdaType type || type.ReturnType.IsAuto || type.Parameters.Any(p => p.Type.IsAuto))
+        if (TypeOf(lambda) is not LambdaType type || type.ReturnType.IsAuto || type.Parameters.Any(p => p.Type.IsAuto))
         {
             Fail("The parameter types of this lambda could not be inferred, name them or pass the lambda where a lambda type is expected", lambda.Span);
             return false;
@@ -60,7 +60,7 @@ public sealed partial class FunctionEmitter
             }
         }
 
-        using var emitter = new FunctionEmitter(_context, _module, _types, _typed, _functions, _constructors, _members, _strings);
+        using var emitter = new FunctionEmitter(_context, _module, _types, _typed, _functions, _constructors, _members, _strings, _instantiate, _substitution);
         emitter.EmitLambda(lambda, type, function, environmentType, captured, hasSelf, _selfOwner, _selfReceiver, _scope);
         if (emitter.HasErrors) HasErrors = true;
 

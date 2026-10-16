@@ -43,7 +43,7 @@ public sealed partial class FunctionEmitter
             foreach (var expression in expressions)
             {
                 if (!TryLowerValue(expression, out var lowered)) return false;
-                operands.Add(new Operand(lowered, _typed.TypeOf(expression)));
+                operands.Add(new Operand(lowered, TypeOf(expression)));
             }
 
             return TryCallStatic(op, declared, operands, span, out value);
@@ -98,7 +98,7 @@ public sealed partial class FunctionEmitter
             }
 
             if (!TryLowerValue(right, out var argument)) return false;
-            arguments.Add(Coerce(argument, _typed.TypeOf(right), parameter.Type, right.Span));
+            arguments.Add(Coerce(argument, TypeOf(right), parameter.Type, right.Span));
         }
 
         var isVoid = op.ReturnType == AeroType.Void;
@@ -126,7 +126,7 @@ public sealed partial class FunctionEmitter
                 return false;
             }
 
-            if (!TryCallStatic(op, declared, [new Operand(old, _typed.TypeOf(u.Operand))], u.Span, out result)) return false;
+            if (!TryCallStatic(op, declared, [new Operand(old, TypeOf(u.Operand))], u.Span, out result)) return false;
         }
         else
         {
@@ -159,7 +159,7 @@ public sealed partial class FunctionEmitter
             LLVMValueRef computed;
             if (op.IsStatic)
             {
-                if (!TryCallStaticWith(op, declared, current, _typed.TypeOf(a.Target), a.Value, a.Span, out computed)) return;
+                if (!TryCallStaticWith(op, declared, current, TypeOf(a.Target), a.Value, a.Span, out computed)) return;
             }
             else
             {
@@ -207,6 +207,6 @@ public sealed partial class FunctionEmitter
         value = default;
         if (!TryLowerValue(right, out var rightValue)) return false;
 
-        return TryCallStatic(op, declared, [new Operand(left, leftType), new Operand(rightValue, _typed.TypeOf(right))], span, out value);
+        return TryCallStatic(op, declared, [new Operand(left, leftType), new Operand(rightValue, TypeOf(right))], span, out value);
     }
 }

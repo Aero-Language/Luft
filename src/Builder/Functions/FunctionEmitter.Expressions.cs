@@ -207,11 +207,7 @@ public sealed partial class FunctionEmitter
         if (isTraitCall) return traitOk;
         if (!traitOk) return false;
 
-        if (!_functions.TryGetValue(function, out var declared))
-        {
-            Fail($"'{function.Name}' cannot be called yet, only non generic module functions can", call.Span);
-            return false;
-        }
+        if (!TryGetDeclared(call, function, out var declared, out var bound)) return false;
 
         var parameters = function.Parameters;
         var arguments = new List<LLVMValueRef>();
@@ -228,7 +224,7 @@ public sealed partial class FunctionEmitter
             var parameter = parameters[i];
             var source = i < call.Arguments.Count ? call.Arguments[i] : parameter.Initializer;
 
-            if (!TryLowerArgument(source, parameter.Type, parameter.Name, call.Span, out var argument)) return false;
+            if (!TryLowerArgument(source, TypeSubstitution.Apply(parameter.Type, bound), parameter.Name, call.Span, out var argument)) return false;
             arguments.Add(argument);
         }
 
@@ -237,9 +233,42 @@ public sealed partial class FunctionEmitter
         if (declared.Owner is ClassSymbol && !IsBaseCall(call) && _members.VirtualSlots.TryGetValue(function, out var slot))
             callee = LoadVirtualFunction(receiver, slot);
 
-        var isVoid = function.ReturnType == AeroType.Void;
+        var isVoid = TypeSubstitution.Apply(function.ReturnType, bound) == AeroType.Void;
         var result = _builder.BuildCall2(declared.Type, callee, arguments.ToArray(), isVoid ? "" : "call");
         if (!isVoid) value = result;
+        return true;
+    }
+
+    // Non generic functions are declared up front, a generic one is instantiated for the type arguments the checker bound.
+    // `bound` holds those arguments (null when not generic) so parameter types can be substituted.
+    private bool TryGetDeclared(AstNode node, FunctionSymbol function, out DeclaredFunction declared, out Dictionary<string, AeroType>? bound)
+    {
+        declared = default!;
+        bound = null;
+
+        if (function.GenericParameters.Count == 0)
+        {
+            if (_functions.TryGetValue(function, out declared!)) return true;
+
+            Fail($"'{function.Name}' cannot be used yet, only module functions and methods of non generic types can", node.Span);
+            return false;
+        }
+
+        if (_instantiate is null || _typed.BindingOf(node) is not FunctionBinding binding)
+        {
+            Fail($"The generic function '{function.Name}' has no type arguments here", node.Span);
+            return false;
+        }
+
+        bound = binding.TypeArguments.ToDictionary(p => p.Key, p => Subst(p.Value));
+        var instance = _instantiate(function, bound, node.Span);
+        if (instance is null)
+        {
+            HasErrors = true; // reported by the generator
+            return false;
+        }
+
+        declared = instance;
         return true;
     }
 
@@ -291,7 +320,7 @@ public sealed partial class FunctionEmitter
         }
 
         if (!TryLowerValue(source, out var lowered)) return false;
-        argument = Coerce(lowered, _typed.TypeOf(source), type, source.Span);
+        argument = Coerce(lowered, TypeOf(source), type, source.Span);
         return true;
     }
 
@@ -317,11 +346,7 @@ public sealed partial class FunctionEmitter
     {
         value = default;
 
-        if (!_functions.TryGetValue(function, out var declared))
-        {
-            Fail($"'{function.Name}' cannot be used as a value yet, only non generic module functions can", node.Span);
-            return false;
-        }
+        if (!TryGetDeclared(node, function, out var declared, out _)) return false;
 
         if (declared.HasSelf)
         {
@@ -363,6 +388,8 @@ public sealed partial class FunctionEmitter
     // Wraps into a nullable where the target needs it, everything else already matches
     private LLVMValueRef Coerce(LLVMValueRef value, AeroType? from, AeroType to, SourceSpan span)
     {
+        if (from is not null) from = Subst(from);
+        to = Subst(to);
         if (from is not null && value.Handle != IntPtr.Zero && TryConvertToTrait(value, from, to, span, out var asTrait)) return asTrait;
 
         if (from is null || value.Handle == IntPtr.Zero || !to.IsNullable || to.IsRef) return value;

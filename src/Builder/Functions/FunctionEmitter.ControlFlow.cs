@@ -87,7 +87,7 @@ public sealed partial class FunctionEmitter
                 return false;
             }
 
-            incoming.Add((Coerce(value, _typed.TypeOf(body), resultType, body.Span), _builder.InsertBlock));
+            incoming.Add((Coerce(value, TypeOf(body), resultType, body.Span), _builder.InsertBlock));
         }
 
         _builder.BuildBr(end);
@@ -118,7 +118,7 @@ public sealed partial class FunctionEmitter
     {
         value = default;
 
-        var type = _typed.TypeOf(e) ?? AeroType.Void;
+        var type = TypeOf(e) ?? AeroType.Void;
         var wantValue = WantsValue(type, e.ElseBody is not null);
         var lowered = default(LLVMTypeRef);
         if (wantValue && !_types.TryLower(type, _scope, e.Span, out lowered)) return false;
@@ -154,14 +154,14 @@ public sealed partial class FunctionEmitter
         value = default;
 
         if (!TryLowerValue(m.Target, out var target)) return false;
-        var targetType = _typed.TypeOf(m.Target);
+        var targetType = TypeOf(m.Target);
         if (targetType is null)
         {
             Fail("The match target was not resolved", m.Span);
             return false;
         }
 
-        var type = _typed.TypeOf(m) ?? AeroType.Void;
+        var type = TypeOf(m) ?? AeroType.Void;
         var wantValue = WantsValue(type, m.Cases.Count > 0 && m.Cases[^1].Pattern is ElsePattern);
         var lowered = default(LLVMTypeRef);
         if (wantValue && !_types.TryLower(type, _scope, m.Span, out lowered)) return false;
@@ -237,7 +237,7 @@ public sealed partial class FunctionEmitter
 
             case ConstantPattern c:
                 if (!TryLowerValue(c.Value, out var constant)) return false;
-                return TryEmitComparison(Operator.Equality, target, targetType, constant, _typed.TypeOf(c.Value) ?? targetType, c.Span, out test);
+                return TryEmitComparison(Operator.Equality, target, targetType, constant, TypeOf(c.Value) ?? targetType, c.Span, out test);
 
             case RangePattern r:
                 return TryLowerRangeTest(r.Range, target, targetType, out test);
@@ -281,7 +281,7 @@ public sealed partial class FunctionEmitter
         value = default;
 
         if (!TryLowerValue(p.Target, out var target)) return false;
-        var targetType = _typed.TypeOf(p.Target);
+        var targetType = TypeOf(p.Target);
         if (targetType is null)
         {
             Fail("The tested expression was not resolved", p.Span);
@@ -314,7 +314,7 @@ public sealed partial class FunctionEmitter
 
     private void LowerFor(ForExpressionNode f)
     {
-        var collectionType = _typed.TypeOf(f.Collection);
+        var collectionType = TypeOf(f.Collection);
 
         if (_typed.BindingOf(f.Item) is not LocalBinding { Variable: var item })
         {

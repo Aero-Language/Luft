@@ -6,6 +6,9 @@ using Luft.Utility;
 
 namespace Luft.Builder;
 
+// Declares (once) and returns the instance of a generic function for the given type arguments, null after reporting an error
+public delegate DeclaredFunction? InstantiateFunction(FunctionSymbol function, IReadOnlyDictionary<string, AeroType> arguments, SourceSpan span);
+
 // Owner is the type a method belongs to, null for module level functions. A method with HasSelf takes the self pointer as its first parameter.
 // Receiver is the target type of an extension, whose self is a pointer to the receiver value (the object itself for a class)
 public sealed record DeclaredFunction(LLVMValueRef Value, LLVMTypeRef Type, TypeScope Scope, TypeSymbol? Owner = null, bool HasSelf = false, AeroType? Receiver = null);
@@ -26,6 +29,8 @@ public sealed partial class FunctionEmitter : AeroThrower, IDisposable
     private readonly IReadOnlyDictionary<ConstructorKey, DeclaredFunction> _constructors;
     private readonly MemberTable _members;
     private readonly Dictionary<string, LLVMValueRef> _strings;
+    private readonly InstantiateFunction? _instantiate;
+    private IReadOnlyDictionary<string, AeroType>? _substitution; // set while emitting a generic function instance
 
     private readonly Dictionary<VariableSymbol, LocalSlot> _locals = new(ReferenceEqualityComparer.Instance);
     private readonly Stack<(LLVMBasicBlockRef Break, LLVMBasicBlockRef Continue)> _loops = new();
@@ -45,8 +50,11 @@ public sealed partial class FunctionEmitter : AeroThrower, IDisposable
 
     public FunctionEmitter(LLVMContextRef context, LLVMModuleRef module, TypeLowering types, TypedInfo typed,
         IReadOnlyDictionary<FunctionSymbol, DeclaredFunction> functions, IReadOnlyDictionary<ConstructorKey, DeclaredFunction> constructors,
-        MemberTable members, Dictionary<string, LLVMValueRef> strings)
+        MemberTable members, Dictionary<string, LLVMValueRef> strings, InstantiateFunction? instantiate = null,
+        IReadOnlyDictionary<string, AeroType>? substitution = null)
     {
+        _instantiate = instantiate;
+        _substitution = substitution;
         _context = context;
         _module = module;
         _types = types;
@@ -66,6 +74,20 @@ public sealed partial class FunctionEmitter : AeroThrower, IDisposable
 
     public void Emit(FunctionSymbol symbol, DeclaredFunction declared)
         => EmitBody(declared, symbol.Declaration.Parameters, symbol.Body, symbol.ReturnType);
+
+    public void EmitInstance(FunctionSymbol symbol, DeclaredFunction declared, IReadOnlyDictionary<string, AeroType> arguments)
+    {
+        var previous = _types.Substitution;
+        _substitution = arguments;
+        _types.Substitution = arguments;
+        try { EmitBody(declared, symbol.Declaration.Parameters, symbol.Body, Subst(symbol.ReturnType)); }
+        finally { _types.Substitution = previous; }
+    }
+
+    private AeroType Subst(AeroType type) => TypeSubstitution.Apply(type, _substitution);
+
+    // Types of the checker still mention generic parameters inside an instance
+    private AeroType? TypeOf(AstNode node) => _typed.TypeOf(node) is { } type ? Subst(type) : null;
 
     // Functions and operators share this: self first when there is one, then the parameters, then the statements
     private void EmitBody(DeclaredFunction declared, ValueList<ParamNode> parameters, BlockExpressionNode? body, AeroType returnType)
@@ -191,7 +213,7 @@ public sealed partial class FunctionEmitter : AeroThrower, IDisposable
         }
 
         if (!TryLowerValue(v.Initializer, out var init)) return;
-        _builder.BuildStore(Coerce(init, _typed.TypeOf(v.Initializer), type, v.Span), slot);
+        _builder.BuildStore(Coerce(init, TypeOf(v.Initializer), type, v.Span), slot);
     }
 
     private void LowerAssignment(AssignmentStatementNode a)
@@ -211,7 +233,7 @@ public sealed partial class FunctionEmitter : AeroThrower, IDisposable
         if (!TryGetAddress(a.Target, out var address, out _, out var targetType)) return;
 
         if (!TryLowerValue(a.Value, out var value)) return;
-        _builder.BuildStore(Coerce(value, _typed.TypeOf(a.Value), targetType, a.Span), address);
+        _builder.BuildStore(Coerce(value, TypeOf(a.Value), targetType, a.Span), address);
     }
 
     private void LowerReturn(ReturnStatementNode r)
@@ -230,7 +252,7 @@ public sealed partial class FunctionEmitter : AeroThrower, IDisposable
         }
 
         if (TryLowerValue(r.Value, out var value))
-            _builder.BuildRet(Coerce(value, _typed.TypeOf(r.Value), _returnType, r.Span));
+            _builder.BuildRet(Coerce(value, TypeOf(r.Value), _returnType, r.Span));
     }
 
     private void LowerJump(SourceSpan span, Func<(LLVMBasicBlockRef Break, LLVMBasicBlockRef Continue), LLVMBasicBlockRef> target)
@@ -289,7 +311,7 @@ public sealed partial class FunctionEmitter : AeroThrower, IDisposable
                 return;
             }
 
-            _builder.BuildRet(Coerce(value, _typed.TypeOf(statement.Expression), _returnType, statement.Span));
+            _builder.BuildRet(Coerce(value, TypeOf(statement.Expression), _returnType, statement.Span));
             return;
         }
 

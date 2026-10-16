@@ -20,7 +20,7 @@ public sealed partial class FunctionEmitter
             return true;
         }
 
-        if (_typed.TypeOf(literal) is not ArrayType type)
+        if (TypeOf(literal) is not ArrayType type)
         {
             Fail("The array literal was not resolved", literal.Span);
             return false;
@@ -37,7 +37,7 @@ public sealed partial class FunctionEmitter
             if (!TryLowerValue(element, out var item)) return false;
 
             var slot = _builder.BuildGEP2(elementType, data, new[] { LLVMValueRef.CreateConstInt(_context.Int32Type, (ulong)i) }, "elem");
-            _builder.BuildStore(Coerce(item, _typed.TypeOf(element), type.ElementType, element.Span), slot);
+            _builder.BuildStore(Coerce(item, TypeOf(element), type.ElementType, element.Span), slot);
         }
 
         array = _builder.BuildInsertValue(array, data, 0, "array");
@@ -52,7 +52,7 @@ public sealed partial class FunctionEmitter
         elementType = default;
         elementAeroType = AeroType.Error;
 
-        if (_typed.TypeOf(index.Target) is not ArrayType array)
+        if (TypeOf(index.Target) is not ArrayType array)
         {
             Fail("Only arrays can be indexed", index.Span);
             return false;

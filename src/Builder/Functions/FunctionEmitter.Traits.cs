@@ -55,7 +55,7 @@ public sealed partial class FunctionEmitter
         if (target is MemberAccessExpressionNode member)
         {
             receiver = member.Target;
-            receiverType = _typed.TypeOf(member.Target);
+            receiverType = TypeOf(member.Target);
         }
         else receiverType = _selfReceiver;
 

@@ -16,6 +16,14 @@ public sealed class CodeGenerator : AeroThrower, IDisposable
     private readonly TypeTable _table;
     private readonly Dictionary<FunctionSymbol, DeclaredFunction> _functions = new();
     private readonly Dictionary<ConstructorKey, DeclaredFunction> _constructors = new();
+    private readonly Dictionary<FunctionSymbol, GenericTemplate> _templates = new(ReferenceEqualityComparer.Instance);
+    private readonly Dictionary<FunctionSymbol, Dictionary<string, DeclaredFunction>> _instances = new(ReferenceEqualityComparer.Instance);
+    private readonly Queue<(FunctionSymbol Function, DeclaredFunction Declared, Dictionary<string, AeroType> Arguments)> _pending = new();
+    private const int MaxInstances = 2000;
+    private int _instanceCount;
+
+    // Where a generic function was declared, kept until a call asks for an instance
+    private sealed record GenericTemplate(TypeScope Scope, TypeSymbol? Owner, string Path, bool HasSelf);
     private readonly MemberTable _members = new();
     private LLVMValueRef _staticInit; // unset when there is nothing to initialize
     private ModuleSymbol? _declaringModule;
@@ -103,6 +111,7 @@ public sealed class CodeGenerator : AeroThrower, IDisposable
             emitter.EmitStaticInitializers(_staticInit, _members.Initializers);
             failed |= emitter.HasErrors;
         }
+        failed |= !EmitInstances();
         if (failed || _types.HasErrors) return false;
 
         if (!EmitEntryPoint()) return false;
@@ -119,7 +128,7 @@ public sealed class CodeGenerator : AeroThrower, IDisposable
         return true;
     }
 
-    private FunctionEmitter CreateEmitter() => new(_context, Module, _types, _table.Typed, _functions, _constructors, _members, _strings)
+    private FunctionEmitter CreateEmitter() => new(_context, Module, _types, _table.Typed, _functions, _constructors, _members, _strings, Instantiate)
     {
         Diagnostics = Diagnostics,
         OnDiagnostic = OnDiagnostic,
@@ -151,6 +160,69 @@ public sealed class CodeGenerator : AeroThrower, IDisposable
         }
     }
 
+    // Declares the instance of a generic function for these type arguments once and queues its body
+    private DeclaredFunction? Instantiate(FunctionSymbol function, IReadOnlyDictionary<string, AeroType> arguments, SourceSpan span)
+    {
+        if (!_templates.TryGetValue(function, out var template))
+        {
+            Error($"The generic function '{function.Name}' cannot be instantiated here.", span);
+            return null;
+        }
+
+        var map = new Dictionary<string, AeroType>();
+        foreach (var parameter in function.GenericParameters)
+        {
+            if (!arguments.TryGetValue(parameter.Name, out var argument) || argument.IsAuto || argument.IsError || argument is GenericParameterType)
+            {
+                Error($"The type argument '{parameter.Name}' of '{function.Name}' could not be inferred.", span);
+                return null;
+            }
+            map[parameter.Name] = argument;
+        }
+
+        var key = TypeSubstitution.Key(function.GenericParameters, map);
+        if (!_instances.TryGetValue(function, out var known)) _instances[function] = known = new();
+        if (known.TryGetValue(key, out var existing)) return existing;
+
+        if (++_instanceCount > MaxInstances)
+        {
+            Error($"Too many generic instances, '{function.Name}' probably instantiates itself with ever growing types.", span);
+            return null;
+        }
+
+        var previous = _types.Substitution;
+        _types.Substitution = map;
+        LLVMTypeRef? type;
+        try { type = _types.LowerFunction(function.ReturnType, function.Parameters.Select(p => p.Type), template.Scope, function.Span); }
+        finally { _types.Substitution = previous; }
+        if (type is null) return null;
+
+        if (template.HasSelf) type = LLVMTypeRef.CreateFunction(type.Value.ReturnType, new[] { _types.Ptr }.Concat(type.Value.ParamTypes).ToArray(), false);
+
+        var name = $"{InternalName(function, template.Path)}<{key}>";
+        var value = Module.AddFunction(name, type.Value);
+        value.Linkage = LLVMLinkage.LLVMInternalLinkage;
+
+        var declared = new DeclaredFunction(value, type.Value, template.Scope, template.Owner, template.HasSelf);
+        known[key] = declared;
+        _pending.Enqueue((function, declared, map));
+        return declared;
+    }
+
+    // Instances are found while emitting bodies, and emitting them can find more
+    private bool EmitInstances()
+    {
+        var ok = true;
+        while (_pending.Count > 0)
+        {
+            var (function, declared, arguments) = _pending.Dequeue();
+            using var emitter = CreateEmitter();
+            emitter.EmitInstance(function, declared, arguments);
+            ok &= !emitter.HasErrors;
+        }
+        return ok;
+    }
+
     private void DeclareFunctions()
     {
         var symbols = new HashSet<string> { "main" };
@@ -167,9 +239,13 @@ public sealed class CodeGenerator : AeroThrower, IDisposable
     {
         foreach (var f in scope.Functions.Values.SelectMany(l => l))
         {
-            if (f.GenericParameters.Count > 0) continue;
-
             var hasSelf = owner is not null && !f.MemberMods.HasFlag(MemberMod.Static);
+            if (f.GenericParameters.Count > 0)
+            {
+                _templates[f] = new GenericTemplate(scope, owner, path, hasSelf);
+                continue;
+            }
+
             var type = _types.LowerFunction(f.ReturnType, f.Parameters.Select(p => p.Type), scope, f.Span);
             if (type is null) continue;
 

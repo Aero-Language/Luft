@@ -83,7 +83,7 @@ public sealed partial class FunctionEmitter
     private bool TryLowerWith(WithExpressionNode expression, out LLVMValueRef value)
     {
         value = default;
-        var sourceType = _typed.TypeOf(expression.Source);
+        var sourceType = TypeOf(expression.Source);
         if (_types.SymbolOf(sourceType, _scope) is not RecordSymbol record)
         {
             Fail("'with' can only copy a record", expression.Span);
@@ -103,7 +103,7 @@ public sealed partial class FunctionEmitter
             }
 
             if (!TryLowerValue(field.Value, out var replacement)) return false;
-            replacement = Coerce(replacement, _typed.TypeOf(field.Value), slot.Type, field.Value.Span);
+            replacement = Coerce(replacement, TypeOf(field.Value), slot.Type, field.Value.Span);
             copy = _builder.BuildInsertValue(copy, replacement, (uint)slot.Index, field.Name);
         }
 

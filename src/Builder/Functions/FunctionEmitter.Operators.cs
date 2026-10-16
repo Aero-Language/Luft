@@ -39,7 +39,7 @@ public sealed partial class FunctionEmitter
         }
 
         if (!TryLowerValue(b.Left, out var left) || !TryLowerValue(b.Right, out var right)) return false;
-        return TryEmitBinary(b.Operator, left, _typed.TypeOf(b.Left), right, _typed.TypeOf(b.Right), b.Span, out value);
+        return TryEmitBinary(b.Operator, left, TypeOf(b.Left), right, TypeOf(b.Right), b.Span, out value);
     }
 
     private bool TryEmitBinary(Operator op, LLVMValueRef left, AeroType? leftType, LLVMValueRef right, AeroType? rightType,
@@ -226,7 +226,7 @@ public sealed partial class FunctionEmitter
         if (u.Operator is Operator.Increment or Operator.Decrement) return TryLowerStep(u, out value);
 
         if (!TryLowerValue(u.Operand, out var operand)) return false;
-        var type = _typed.TypeOf(u.Operand);
+        var type = TypeOf(u.Operand);
 
         switch (u.Operator)
         {
@@ -259,7 +259,7 @@ public sealed partial class FunctionEmitter
         if (!TryGetAddress(u.Operand, out var address, out var slotType, out _)) return false;
         var slot = new LocalSlot(address, slotType);
 
-        var type = _typed.TypeOf(u.Operand);
+        var type = TypeOf(u.Operand);
         if (!IsNumeric(type))
         {
             Fail($"'{u.Operator.AsString()}' is not lowered for '{type}'", u.Span);
@@ -344,7 +344,7 @@ public sealed partial class FunctionEmitter
         if (!TryLowerValue(a.Value, out var right)) return;
 
         var current = _builder.BuildLoad2(slot.Type, slot.Address, "cur");
-        if (!TryEmitBinary(plain, current, targetType, right, _typed.TypeOf(a.Value), a.Span, out var result)) return;
+        if (!TryEmitBinary(plain, current, targetType, right, TypeOf(a.Value), a.Span, out var result)) return;
 
         _builder.BuildStore(result, slot.Address);
     }

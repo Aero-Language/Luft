@@ -43,7 +43,7 @@ public sealed partial class FunctionEmitter
 
         if (expression is MemberAccessExpressionNode member)
         {
-            var targetType = _typed.TypeOf(member.Target);
+            var targetType = TypeOf(member.Target);
             owner = targetType is null ? null : _types.SymbolOf(targetType, _scope);
             if (owner is null && property.ExtensionTarget is null)
             {
@@ -209,7 +209,7 @@ public sealed partial class FunctionEmitter
     private void LowerPropertyAssignment(AssignmentStatementNode a)
     {
         if (!TryLowerValue(a.Value, out var value)) return;
-        TryStoreProperty(a.Target, value, _typed.TypeOf(a.Value), a.Span);
+        TryStoreProperty(a.Target, value, TypeOf(a.Value), a.Span);
     }
 
     // property op= value, read through the getter and written through the setter
@@ -218,7 +218,7 @@ public sealed partial class FunctionEmitter
         if (!TryGetPropertyBinding(StripScopes(a.Target), out var property)) return;
 
         if (!TryLowerProperty(a.Target, out var current) || !TryLowerValue(a.Value, out var right)) return;
-        if (!TryEmitBinary(plain, current, property.Type, right, _typed.TypeOf(a.Value), a.Span, out var result)) return;
+        if (!TryEmitBinary(plain, current, property.Type, right, TypeOf(a.Value), a.Span, out var result)) return;
 
         TryStoreProperty(a.Target, result, property.Type, a.Span);
     }
@@ -293,7 +293,7 @@ public sealed partial class FunctionEmitter
             _scope = initializer.Scope;
             if (!TryLowerValue(initializer.Value, out var value)) continue;
 
-            _builder.BuildStore(Coerce(value, _typed.TypeOf(initializer.Value), initializer.Target.AeroType, initializer.Span), initializer.Target.Address);
+            _builder.BuildStore(Coerce(value, TypeOf(initializer.Value), initializer.Target.AeroType, initializer.Span), initializer.Target.Address);
         }
 
         _builder.BuildRetVoid();

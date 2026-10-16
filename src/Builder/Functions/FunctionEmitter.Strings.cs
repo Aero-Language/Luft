@@ -69,7 +69,7 @@ public sealed partial class FunctionEmitter
         {
             if (!TryLowerValue(part, out var lowered)) return false;
 
-            var type = _typed.TypeOf(part);
+            var type = TypeOf(part);
             if (type is null)
             {
                 Fail("The interpolated expression was not resolved", part.Span);

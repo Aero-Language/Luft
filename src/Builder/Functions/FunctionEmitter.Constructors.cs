@@ -178,7 +178,7 @@ public sealed partial class FunctionEmitter
                 if (!TryLowerValue(member.Initializer, out var value)) return false;
 
                 var address = _builder.BuildStructGEP2(layout.StructType, _self, (uint)slot.Index, member.Name);
-                _builder.BuildStore(Coerce(value, _typed.TypeOf(member.Initializer), slot.Type, member.Span), address);
+                _builder.BuildStore(Coerce(value, TypeOf(member.Initializer), slot.Type, member.Span), address);
             }
         }
         return true;

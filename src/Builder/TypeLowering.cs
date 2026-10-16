@@ -82,10 +82,14 @@ public sealed class TypeLowering : AeroThrower
 
     private static bool IsVoid(LLVMTypeRef type) => type.Kind == LLVMTypeKind.LLVMVoidTypeKind;
 
+    // The generic arguments of the function instance being emitted, applied to every type that gets lowered
+    public IReadOnlyDictionary<string, AeroType>? Substitution { get; set; }
+
     // Reports and returns false when the type can't be lowered
     public bool TryLower(AeroType type, TypeScope scope, SourceSpan span, out LLVMTypeRef result)
     {
         result = Ptr;
+        type = TypeSubstitution.Apply(type, Substitution);
         if (!Core(type, scope, span, out var core, out var isClass)) return false;
 
         if (type.IsRef)

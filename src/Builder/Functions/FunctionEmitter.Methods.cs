@@ -112,7 +112,7 @@ public sealed partial class FunctionEmitter
                 return true;
             case MemberAccessExpressionNode member when _typed.BindingOf(member) is FieldBinding:
             {
-                var targetType = _typed.TypeOf(member.Target);
+                var targetType = TypeOf(member.Target);
                 var owner = targetType is null ? null : _types.SymbolOf(targetType, _scope);
                 return owner is ClassSymbol || IsAddressable(member.Target);
             }

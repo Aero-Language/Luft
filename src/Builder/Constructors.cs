@@ -13,12 +13,13 @@ public readonly record struct ConstructorKey(TypeSymbol Type, ConstructorSymbol?
 // The constructors a type offers, in the same shapes BodyResolver matches calls against
 public static class ConstructorShapes
 {
-    public static List<(ConstructorKey Key, ValueList<ParamSymbol> Parameters)> Of(TypeSymbol type, TypeLayout layout)
+    // `arguments` are the type arguments when the type is an instance of a generic one
+    public static List<(ConstructorKey Key, ValueList<ParamSymbol> Parameters)> Of(TypeSymbol type, TypeLayout layout, IReadOnlyDictionary<string, AeroType>? arguments = null)
     {
         var result = new List<(ConstructorKey Key, ValueList<ParamSymbol> Parameters)>();
 
         foreach (var c in type.Scope.Constructors)
-            result.Add((new ConstructorKey(type, c, ConstructorKind.Explicit), c.Parameters));
+            result.Add((new ConstructorKey(type, c, ConstructorKind.Explicit), Substitute(c.Parameters, arguments)));
 
         if (type.Scope.PrimaryConstructor is { } primary)
         {
@@ -40,6 +41,9 @@ public static class ConstructorShapes
 
         return result;
     }
+
+    private static ValueList<ParamSymbol> Substitute(ValueList<ParamSymbol> parameters, IReadOnlyDictionary<string, AeroType>? arguments)
+        => arguments is null ? parameters : parameters.Select(p => p with { Type = TypeSubstitution.Apply(p.Type, arguments) }).ToValueList();
 
     // Which constructor a call bound to; the checker only records the symbol of explicit ones
     public static ConstructorKey Select(TypeSymbol type, ConstructorSymbol? symbol, int argumentCount)

@@ -29,7 +29,7 @@ public sealed partial class FunctionEmitter
             return false;
         }
 
-        property = binding.Property;
+        property = OnInstance(binding.Property, expression);
         return true;
     }
 
@@ -224,13 +224,16 @@ public sealed partial class FunctionEmitter
     }
 
     public void EmitAccessor(AccessorKey key, DeclaredFunction declared)
+        => WithInstance(declared.Owner, null, null, () => EmitAccessorCore(key, declared));
+
+    private void EmitAccessorCore(AccessorKey key, DeclaredFunction declared)
     {
         var property = key.Property;
         var accessor = key.IsSetter ? property.Setter! : property.Getter!;
 
         _function = declared.Value;
         _scope = declared.Scope;
-        _returnType = key.IsSetter ? AeroType.Void : property.Type;
+        _returnType = key.IsSetter ? AeroType.Void : Subst(property.Type);
 
         var offset = 0;
         if (declared.HasSelf)
@@ -291,9 +294,12 @@ public sealed partial class FunctionEmitter
         foreach (var initializer in initializers)
         {
             _scope = initializer.Scope;
-            if (!TryLowerValue(initializer.Value, out var value)) continue;
+            WithInstance(initializer.Owner, null, null, () =>
+            {
+                if (!TryLowerValue(initializer.Value, out var value)) return;
 
-            _builder.BuildStore(Coerce(value, TypeOf(initializer.Value), initializer.Target.AeroType, initializer.Span), initializer.Target.Address);
+                _builder.BuildStore(Coerce(value, TypeOf(initializer.Value), initializer.Target.AeroType, initializer.Span), initializer.Target.Address);
+            });
         }
 
         _builder.BuildRetVoid();

@@ -21,6 +21,10 @@ public sealed class CodeGenerator : AeroThrower, IDisposable
     private readonly Queue<(FunctionSymbol Function, DeclaredFunction Declared, Dictionary<string, AeroType> Arguments, Dictionary<string, TypeSymbol> Pins)> _pending = new();
     private const int MaxInstances = 2000;
     private int _instanceCount;
+    private readonly HashSet<object> _emitted = new();
+    private readonly HashSet<string> _symbols = new() { "main" };
+    private bool _vtablesReady;
+    private bool _traitTablesReady;
 
     // Where a generic function was declared, kept until a call asks for an instance
     private sealed record GenericTemplate(TypeScope Scope, TypeSymbol? Owner, string Path, bool HasSelf);
@@ -60,7 +64,7 @@ public sealed class CodeGenerator : AeroThrower, IDisposable
     public bool Generate()
     {
         // Created here because Diagnostics is assigned after construction
-        _types = new TypeLowering(_context, _table) { Diagnostics = Diagnostics, OnDiagnostic = OnDiagnostic, OnError = OnError };
+        _types = new TypeLowering(_context, _table) { Diagnostics = Diagnostics, OnDiagnostic = OnDiagnostic, OnError = OnError, OnInstance = DeclareInstance };
 
         foreach (var module in _table.Modules.Values) LowerScope(module.Scope);
         if (_types.HasErrors) return false;
@@ -71,37 +75,7 @@ public sealed class CodeGenerator : AeroThrower, IDisposable
         DeclareVTables();
         DeclareTraitVTables();
 
-        var failed = false;
-        foreach (var (symbol, declared) in _functions)
-        {
-            using var emitter = CreateEmitter();
-            emitter.Emit(symbol, declared);
-            failed |= emitter.HasErrors;
-        }
-        foreach (var (key, declared) in _constructors)
-        {
-            using var emitter = CreateEmitter();
-            emitter.EmitConstructor(key, declared);
-            failed |= emitter.HasErrors;
-        }
-        foreach (var (key, declared) in _members.Accessors)
-        {
-            using var emitter = CreateEmitter();
-            emitter.EmitAccessor(key, declared);
-            failed |= emitter.HasErrors;
-        }
-        foreach (var (symbol, declared) in _members.Operators)
-        {
-            using var emitter = CreateEmitter();
-            emitter.EmitOperator(symbol, declared);
-            failed |= emitter.HasErrors;
-        }
-        foreach (var (type, declared) in _members.Destroyers)
-        {
-            using var emitter = CreateEmitter();
-            emitter.EmitDestroyer((ClassSymbol)type, declared);
-            failed |= emitter.HasErrors;
-        }
+        var failed = !EmitAll();
         if (_members.Initializers.Count > 0)
         {
             _staticInit = Module.AddFunction("aero.init", LLVMTypeRef.CreateFunction(_context.VoidType, [], false));
@@ -110,8 +84,8 @@ public sealed class CodeGenerator : AeroThrower, IDisposable
             using var emitter = CreateEmitter();
             emitter.EmitStaticInitializers(_staticInit, _members.Initializers);
             failed |= emitter.HasErrors;
+            failed |= !EmitAll(); // the initializers can bring in more instances
         }
-        failed |= !EmitInstances();
         if (failed || _types.HasErrors) return false;
 
         if (!EmitEntryPoint()) return false;
@@ -193,10 +167,12 @@ public sealed class CodeGenerator : AeroThrower, IDisposable
         // Named types are looked up where the call is, the generic function's own scope may not see them
         var pins = _types.Pin(map.Values, callerScope);
 
+        // A method of a generic type's instance sees the arguments of the type as well
+        var ownerInfo = _types.InfoOf(template.Owner);
         var previous = _types.Substitution;
         var previousPins = _types.Pinned;
-        _types.Substitution = map;
-        _types.Pinned = pins;
+        _types.Substitution = TypeSubstitution.Merge(ownerInfo?.Arguments, map);
+        _types.Pinned = TypeSubstitution.Merge(ownerInfo?.Pins, pins);
         LLVMTypeRef? type;
         try { type = _types.LowerFunction(function.ReturnType, function.Parameters.Select(p => p.Type), template.Scope, function.Span); }
         finally
@@ -218,29 +194,131 @@ public sealed class CodeGenerator : AeroThrower, IDisposable
         return declared;
     }
 
-    // Instances are found while emitting bodies, and emitting them can find more
-    private bool EmitInstances()
+    // Bodies bring in generic instances that need declaring and emitting too, so this repeats until nothing new is left
+    private bool EmitAll()
     {
         var ok = true;
-        while (_pending.Count > 0)
+        bool progress;
+
+        do
         {
-            var (function, declared, arguments, pins) = _pending.Dequeue();
-            using var emitter = CreateEmitter();
-            emitter.EmitInstance(function, declared, arguments, pins);
-            ok &= !emitter.HasErrors;
-        }
+            progress = false;
+
+            foreach (var (symbol, declared) in _functions.ToList())
+            {
+                if (!_emitted.Add(symbol)) continue;
+                progress = true;
+                using var emitter = CreateEmitter();
+                emitter.Emit(symbol, declared);
+                ok &= !emitter.HasErrors;
+            }
+            foreach (var (key, declared) in _constructors.ToList())
+            {
+                if (!_emitted.Add(key)) continue;
+                progress = true;
+                using var emitter = CreateEmitter();
+                emitter.EmitConstructor(key, declared);
+                ok &= !emitter.HasErrors;
+            }
+            foreach (var (key, declared) in _members.Accessors.ToList())
+            {
+                if (!_emitted.Add(key)) continue;
+                progress = true;
+                using var emitter = CreateEmitter();
+                emitter.EmitAccessor(key, declared);
+                ok &= !emitter.HasErrors;
+            }
+            foreach (var (symbol, declared) in _members.Operators.ToList())
+            {
+                if (!_emitted.Add(symbol)) continue;
+                progress = true;
+                using var emitter = CreateEmitter();
+                emitter.EmitOperator(symbol, declared);
+                ok &= !emitter.HasErrors;
+            }
+            foreach (var (type, declared) in _members.Destroyers.ToList())
+            {
+                if (!_emitted.Add(type)) continue;
+                progress = true;
+                using var emitter = CreateEmitter();
+                emitter.EmitDestroyer((ClassSymbol)type, declared);
+                ok &= !emitter.HasErrors;
+            }
+            while (_pending.Count > 0)
+            {
+                progress = true;
+                var (function, declared, arguments, pins) = _pending.Dequeue();
+                using var emitter = CreateEmitter();
+                emitter.EmitInstance(function, declared, arguments, pins);
+                ok &= !emitter.HasErrors;
+            }
+        } while (progress);
+
         return ok;
     }
 
     private void DeclareFunctions()
     {
-        var symbols = new HashSet<string> { "main" };
-
         foreach (var module in _table.Modules.Values)
         {
             _declaringModule = module;
-            DeclareScope(module.Scope, null, "", true, symbols);
+            DeclareScope(module.Scope, null, "", true, _symbols);
         }
+    }
+
+    // Declares the members of a generic type's instance like those of any other type, but internal: its functions, constructors, fields and, once they exist, vtables
+    private void DeclareInstance(TypeSymbol instance)
+    {
+        var info = _types.InfoOf(instance)!;
+        var module = info.Definition.Module;
+        var path = $"{PathOf(info.Definition)}<{info.Key}>";
+
+        var (previousModule, previousSubstitution, previousPins) = (_declaringModule, _types.Substitution, _types.Pinned);
+        _declaringModule = module;
+        _types.Substitution = info.Arguments;
+        _types.Pinned = info.Pins;
+
+        try
+        {
+            _valueTypes.Add((instance, path, module));
+            if (instance is ClassSymbol classSymbol) _classes.Add((classSymbol, path, module));
+
+            DeclareConstructors(instance, path, false, _symbols);
+            DeclareScope(instance.Scope, instance, path, false, _symbols);
+
+            if (_vtablesReady && instance is ClassSymbol created)
+            {
+                DeclareDestroyer(created, path, module);
+                DeclareVTable(created, path, module);
+            }
+            if (_traitTablesReady) DeclareTraitTables(instance, path, module);
+        }
+        finally
+        {
+            _declaringModule = previousModule;
+            _types.Substitution = previousSubstitution;
+            _types.Pinned = previousPins;
+        }
+    }
+
+    // The dotted path of a type through the scopes it is nested in
+    private string PathOf(TypeSymbol type)
+    {
+        foreach (var module in _table.Modules.Values)
+            if (FindPath(module.Scope, type, "") is { } path) return path;
+
+        return type.Name;
+    }
+
+    private static string? FindPath(TypeScope scope, TypeSymbol target, string prefix)
+    {
+        foreach (var symbol in scope.Types.Values.SelectMany(l => l))
+        {
+            var path = prefix.Length == 0 ? symbol.Name : $"{prefix}.{symbol.Name}";
+            if (ReferenceEquals(symbol, target)) return path;
+            if (FindPath(symbol.Scope, target, path) is { } nested) return nested;
+        }
+        return null;
     }
 
     // The functions of one scope, then the methods of every non generic type in it. `path` is the dotted type path, empty at module level.
@@ -302,37 +380,43 @@ public sealed class CodeGenerator : AeroThrower, IDisposable
         }
     }
 
-    // Every class gets a destroy function (its destructor, then its base class's) and a vtable: that function followed by one entry per virtual slot
+    // Every class gets a destroy function (its destructor, then its base class's) and a vtable: that function followed by one entry per virtual slot.
+    // Instances created after this point declare theirs themselves.
     private void DeclareVTables()
     {
+        var classes = _classes.ToList();
+        _vtablesReady = true;
+
+        foreach (var (type, path, module) in classes) DeclareDestroyer(type, path, module);
+        foreach (var (type, path, module) in classes) DeclareVTable(type, path, module);
+    }
+
+    private void DeclareDestroyer(ClassSymbol type, string path, ModuleSymbol module)
+    {
         var destroyType = LLVMTypeRef.CreateFunction(_context.VoidType, [_types.Ptr], false);
+        var destroy = Module.AddFunction($"{QualifiedName(module, path)}.<destroy>", destroyType);
+        destroy.Linkage = LLVMLinkage.LLVMInternalLinkage;
 
-        foreach (var (type, path, module) in _classes)
-        {
-            var destroy = Module.AddFunction($"{QualifiedName(module, path)}.<destroy>", destroyType);
-            destroy.Linkage = LLVMLinkage.LLVMInternalLinkage;
+        _members.Destroyers[type] = new DeclaredFunction(destroy, destroyType, type.Scope, type, true);
+    }
 
-            _members.Destroyers[type] = new DeclaredFunction(destroy, destroyType, type.Scope, type, true);
-        }
+    private void DeclareVTable(ClassSymbol type, string path, ModuleSymbol module)
+    {
+        var entries = new List<LLVMValueRef> { _members.Destroyers[type].Value };
 
-        foreach (var (type, path, module) in _classes)
-        {
-            var entries = new List<LLVMValueRef> { _members.Destroyers[type].Value };
+        // A slot without an implementation (abstract) stays null
+        foreach (var slot in VirtualTables.Of(type, _types, _members.VirtualSlots))
+            entries.Add(slot.Implementation.Body is not null && _functions.TryGetValue(slot.Implementation, out var implementation)
+                ? implementation.Value
+                : LLVMValueRef.CreateConstPointerNull(_types.Ptr));
 
-            // A slot without an implementation (abstract) stays null
-            foreach (var slot in VirtualTables.Of(type, _types, _members.VirtualSlots))
-                entries.Add(slot.Implementation.Body is not null && _functions.TryGetValue(slot.Implementation, out var implementation)
-                    ? implementation.Value
-                    : LLVMValueRef.CreateConstPointerNull(_types.Ptr));
+        var array = LLVMValueRef.CreateConstArray(_types.Ptr, entries.ToArray());
+        var table = Module.AddGlobal(array.TypeOf, $"{QualifiedName(module, path)}.<vtable>");
+        table.Initializer = array;
+        table.IsGlobalConstant = true;
+        table.Linkage = LLVMLinkage.LLVMInternalLinkage;
 
-            var array = LLVMValueRef.CreateConstArray(_types.Ptr, entries.ToArray());
-            var table = Module.AddGlobal(array.TypeOf, $"{QualifiedName(module, path)}.<vtable>");
-            table.Initializer = array;
-            table.IsGlobalConstant = true;
-            table.Linkage = LLVMLinkage.LLVMInternalLinkage;
-
-            _members.VTables[type] = table;
-        }
+        _members.VTables[type] = table;
     }
 
     // A default method is a function taking a pointer to the trait value as self; methods without a body are only listed in the vtable
@@ -402,12 +486,14 @@ public sealed class CodeGenerator : AeroThrower, IDisposable
 
         for (var link = type; link is not null && !result.Contains(link as TraitSymbol!); link = _types.BaseOf(link))
             foreach (var listed in ListedTypesOf(link))
-                if (_types.SymbolOf(listed, link.Scope) is TraitSymbol trait && trait.GenericParameters.Count == 0) Add(trait);
+                if (_types.SymbolOf(TypeSubstitution.Apply(listed, _types.InfoOf(link)?.Arguments), link.Scope) is TraitSymbol trait && trait.GenericParameters.Count == 0) Add(trait);
 
         return result;
     }
 
-    private static string SignatureOf(FunctionSymbol f) => $"{f.Name}({string.Join(",", f.Parameters.Select(p => p.Type))})";
+    // Parameter types are compared after the type arguments of a generic type's instance are substituted
+    private static string SignatureOf(FunctionSymbol f, IReadOnlyDictionary<string, AeroType>? arguments = null)
+        => $"{f.Name}({string.Join(",", f.Parameters.Select(p => TypeSubstitution.Apply(p.Type, arguments)))})";
 
     // One constant table per type and trait it implements: the function behind every method of the trait, taking the data pointer as self
     private void DeclareTraitVTables()
@@ -421,24 +507,29 @@ public sealed class CodeGenerator : AeroThrower, IDisposable
             for (var i = 0; i < methods.Count; i++) _members.TraitSlots[(trait, methods[i])] = i;
         }
 
-        var tables = new List<(TypeSymbol Type, TraitSymbol Trait, string Path, ModuleSymbol Module, LLVMValueRef Table)>();
-        foreach (var (type, path, module) in _valueTypes)
+        var types = _valueTypes.ToList();
+        _traitTablesReady = true;
+
+        foreach (var (type, path, module) in types) DeclareTraitTables(type, path, module);
+    }
+
+    private void DeclareTraitTables(TypeSymbol type, string path, ModuleSymbol module)
+    {
+        var tables = new List<(TraitSymbol Trait, LLVMValueRef Table)>();
+        foreach (var trait in TraitsOf(type))
         {
-            foreach (var trait in TraitsOf(type))
-            {
-                if (!_members.TraitMethods.TryGetValue(trait, out var methods)) continue;
+            if (!_members.TraitMethods.TryGetValue(trait, out var methods)) continue;
 
-                var table = Module.AddGlobal(LLVMTypeRef.CreateArray(_types.Ptr, (uint)methods.Count), $"{QualifiedName(module, path)}.<trait:{trait.Name}>");
-                table.Linkage = LLVMLinkage.LLVMInternalLinkage;
-                table.IsGlobalConstant = true;
+            var table = Module.AddGlobal(LLVMTypeRef.CreateArray(_types.Ptr, (uint)methods.Count), $"{QualifiedName(module, path)}.<trait:{trait.Name}>");
+            table.Linkage = LLVMLinkage.LLVMInternalLinkage;
+            table.IsGlobalConstant = true;
 
-                _members.TraitVTables[(type, trait)] = table;
-                tables.Add((type, trait, path, module, table));
-            }
+            _members.TraitVTables[(type, trait)] = table;
+            tables.Add((trait, table));
         }
 
-        // Filled once every table exists, a default method's thunk refers to the table of its own type
-        foreach (var (type, trait, path, module, table) in tables)
+        // Filled once the type's tables exist, a default method's thunk refers to the table of its own type
+        foreach (var (trait, table) in tables)
         {
             var entries = new List<LLVMValueRef>();
             foreach (var method in _members.TraitMethods[trait])
@@ -455,7 +546,7 @@ public sealed class CodeGenerator : AeroThrower, IDisposable
         for (var link = type; link is not null; link = _types.BaseOf(link))
         {
             var found = link.Scope.Functions.Values.SelectMany(l => l)
-                .FirstOrDefault(f => !f.MemberMods.HasFlag(MemberMod.Static) && f.GenericParameters.Count == 0 && SignatureOf(f) == signature && f.Body is not null);
+                .FirstOrDefault(f => !f.MemberMods.HasFlag(MemberMod.Static) && f.GenericParameters.Count == 0 && SignatureOf(f, _types.InfoOf(link)?.Arguments) == signature && f.Body is not null);
 
             if (found is not null && _functions.TryGetValue(found, out var implementation)) return implementation.Value;
         }
@@ -551,7 +642,7 @@ public sealed class CodeGenerator : AeroThrower, IDisposable
             var variable = AddGlobal(name, lowered, type, external);
             _members.Fields[field] = variable;
 
-            if (field.Initializer is not null) _members.Initializers.Add(new StaticInitializer(variable, field.Initializer, scope, field.Span));
+            if (field.Initializer is not null) _members.Initializers.Add(new StaticInitializer(variable, field.Initializer, scope, field.Span, owner));
         }
     }
 
@@ -579,7 +670,7 @@ public sealed class CodeGenerator : AeroThrower, IDisposable
                     var variable = AddGlobal(name, lowered, p.Type, false);
                     _members.Backing[p] = variable;
 
-                    if (p.Initializer is not null) _members.Initializers.Add(new StaticInitializer(variable, p.Initializer, scope, p.Span));
+                    if (p.Initializer is not null) _members.Initializers.Add(new StaticInitializer(variable, p.Initializer, scope, p.Span, owner));
                 }
             }
 
@@ -642,7 +733,7 @@ public sealed class CodeGenerator : AeroThrower, IDisposable
 
         var modulePrefix = type.Module.ModulePath.Length == 0 ? "" : type.Module.ModulePath;
 
-        foreach (var (key, parameters) in ConstructorShapes.Of(type, layout))
+        foreach (var (key, parameters) in ConstructorShapes.Of(type, layout, _types.InfoOf(type)?.Arguments))
         {
             var lowered = _types.LowerFunction(AeroType.Void, parameters.Select(p => p.Type), type.Scope, type.Span);
             if (lowered is null) continue;

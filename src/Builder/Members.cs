@@ -12,7 +12,7 @@ public sealed record GlobalVariable(LLVMValueRef Address, LLVMTypeRef Type, Aero
 public readonly record struct AccessorKey(PropertySymbol Property, bool IsSetter);
 
 // Runs once at startup and stores a static's initial value
-public sealed record StaticInitializer(GlobalVariable Target, ExpressionNode Value, TypeScope Scope, SourceSpan Span);
+public sealed record StaticInitializer(GlobalVariable Target, ExpressionNode Value, TypeScope Scope, SourceSpan Span, TypeSymbol? Owner = null);
 
 // Statics, module level fields and properties, declared once and shared by every FunctionEmitter
 public sealed class MemberTable
@@ -49,7 +49,9 @@ public sealed record VirtualSlot(string Key, FunctionSymbol Implementation);
 
 public static class VirtualTables
 {
-    public static string KeyOf(FunctionSymbol function) => $"{function.Name}({string.Join(",", function.Parameters.Select(p => p.Type))})";
+    // Parameter types of a generic type's method are compared after its type arguments are substituted
+    public static string KeyOf(FunctionSymbol function, IReadOnlyDictionary<string, AeroType>? arguments = null)
+        => $"{function.Name}({string.Join(",", function.Parameters.Select(p => TypeSubstitution.Apply(p.Type, arguments)))})";
 
     private static bool IsVirtual(FunctionSymbol function)
         => function.InheritanceMod is InheritanceMod.Virtual or InheritanceMod.Abstract or InheritanceMod.Implements or InheritanceMod.Sealed
@@ -62,9 +64,10 @@ public static class VirtualTables
     {
         var slots = types.BaseOf(type) is ClassSymbol baseClass ? Of(baseClass, types, index) : new List<VirtualSlot>();
 
+        var arguments = types.InfoOf(type)?.Arguments;
         foreach (var function in type.Scope.Functions.Values.SelectMany(l => l).OrderBy(f => f.Span.Start).Where(IsVirtual))
         {
-            var key = KeyOf(function);
+            var key = KeyOf(function, arguments);
             var at = slots.FindIndex(s => s.Key == key);
 
             if (at >= 0) slots[at] = slots[at] with { Implementation = function };

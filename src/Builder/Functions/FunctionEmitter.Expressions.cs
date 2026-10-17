@@ -207,9 +207,9 @@ public sealed partial class FunctionEmitter
         if (isTraitCall) return traitOk;
         if (!traitOk) return false;
 
-        if (!TryGetDeclared(call, function, out var declared, out var bound)) return false;
+        if (!TryGetDeclared(call, function, out var target, out var declared, out var bound)) return false;
 
-        var parameters = function.Parameters;
+        var parameters = target.Parameters;
         var arguments = new List<LLVMValueRef>();
 
         LLVMValueRef receiver = default;
@@ -230,28 +230,33 @@ public sealed partial class FunctionEmitter
 
         // A virtual method on a class goes through the vtable of the object it is called on
         var callee = declared.Value;
-        if (declared.Owner is ClassSymbol && !IsBaseCall(call) && _members.VirtualSlots.TryGetValue(function, out var slot))
+        if (declared.Owner is ClassSymbol && !IsBaseCall(call) && _members.VirtualSlots.TryGetValue(target, out var slot))
             callee = LoadVirtualFunction(receiver, slot);
 
-        var isVoid = TypeSubstitution.Apply(function.ReturnType, bound) == AeroType.Void;
+        var isVoid = TypeSubstitution.Apply(target.ReturnType, bound) == AeroType.Void;
         var result = _builder.BuildCall2(declared.Type, callee, arguments.ToArray(), isVoid ? "" : "call");
         if (!isVoid) value = result;
         return true;
     }
 
-    // Non generic functions are declared up front, a generic one is instantiated for the type arguments the checker bound.
-    // `bound` holds those arguments (null when not generic) so parameter types can be substituted.
-    private bool TryGetDeclared(AstNode node, FunctionSymbol function, out DeclaredFunction declared, out Dictionary<string, AeroType>? bound)
+    // A function of a generic type is looked up in the instance the call is on, a generic function is instantiated for the type arguments the checker bound.
+    // `target` is the function actually called, `bound` the type arguments to substitute into its parameter types (null when there are none).
+    private bool TryGetDeclared(AstNode node, FunctionSymbol function, out FunctionSymbol target, out DeclaredFunction declared, out Dictionary<string, AeroType>? bound)
     {
         declared = default!;
         bound = null;
+        target = OnInstance(function, node);
 
-        if (function.GenericParameters.Count == 0)
+        if (target.GenericParameters.Count == 0)
         {
-            if (_functions.TryGetValue(function, out declared!)) return true;
+            if (!_functions.TryGetValue(target, out declared!))
+            {
+                Fail($"'{function.Name}' cannot be used yet, only module functions and methods of classes, structs and records can", node.Span);
+                return false;
+            }
 
-            Fail($"'{function.Name}' cannot be used yet, only module functions and methods of non generic types can", node.Span);
-            return false;
+            bound = TypeSubstitution.Merge<AeroType>(_types.InfoOf(declared.Owner)?.Arguments, null);
+            return true;
         }
 
         if (_instantiate is null || _typed.BindingOf(node) is not FunctionBinding binding)
@@ -260,8 +265,8 @@ public sealed partial class FunctionEmitter
             return false;
         }
 
-        bound = binding.TypeArguments.ToDictionary(p => p.Key, p => Subst(p.Value));
-        var instance = _instantiate(function, bound, _scope, node.Span);
+        var own = binding.TypeArguments.ToDictionary(p => p.Key, p => Subst(p.Value));
+        var instance = _instantiate(target, own, _scope, node.Span);
         if (instance is null)
         {
             HasErrors = true; // reported by the generator
@@ -269,7 +274,53 @@ public sealed partial class FunctionEmitter
         }
 
         declared = instance;
+        bound = TypeSubstitution.Merge(_types.InfoOf(instance.Owner)?.Arguments, own);
         return true;
+    }
+
+    // The type of the object a member is reached through: `obj.Name` and `obj.Name(...)` give the type of obj
+    private AeroType? ReceiverTypeOf(AstNode node)
+    {
+        while (true)
+        {
+            switch (node)
+            {
+                case CallExpressionNode c: node = c.Target; break;
+                case ScopedExpressionNode s: node = s.Scoped; break;
+                case MemberAccessExpressionNode m: return TypeOf(m.Target);
+                default: return null;
+            }
+        }
+    }
+
+    // The instance of a generic type a member was used on: what the checker recorded, else the type of the receiver or its bases, else self
+    private TypeSymbol? FindInstance(TypeSymbol definition, AstNode node, AeroType? receiver = null)
+    {
+        if (_typed.BindingOf(node) is FunctionBinding { ReceiverTypeArguments: { } received } && definition.GenericParameters.All(p => received.ContainsKey(p.Name)))
+        {
+            var arguments = definition.GenericParameters.Select(p => Subst(received[p.Name])).ToList();
+            if (arguments.All(a => !a.IsAuto && !a.IsError && a is not GenericParameterType))
+                return _types.Instantiate(definition, arguments, _scope, node.Span);
+        }
+
+        receiver ??= ReceiverTypeOf(node);
+        for (var link = receiver is null ? null : _types.SymbolOf(receiver, _scope); link is not null; link = _types.BaseOf(link))
+            if (_types.InfoOf(link)?.Definition == definition) return link;
+
+        for (var link = _selfOwner; link is not null; link = _types.BaseOf(link))
+            if (_types.InfoOf(link)?.Definition == definition) return link;
+
+        return null;
+    }
+
+    // The copy of a member of a generic type that lives in the instance it was used on; members of anything else come back as they are
+    private T OnInstance<T>(T member, AstNode node) where T : class
+    {
+        var definition = _types.DefinitionOfMember(member);
+        if (definition is null) return member;
+
+        var owner = FindInstance(definition, node);
+        return owner is null ? member : _types.MapMember(owner, member);
     }
 
     // A call through a lambda value: { function, environment }, the environment is passed first
@@ -346,7 +397,7 @@ public sealed partial class FunctionEmitter
     {
         value = default;
 
-        if (!TryGetDeclared(node, function, out var declared, out _)) return false;
+        if (!TryGetDeclared(node, function, out _, out var declared, out _)) return false;
 
         if (declared.HasSelf)
         {

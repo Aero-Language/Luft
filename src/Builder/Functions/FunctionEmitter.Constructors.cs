@@ -11,6 +11,9 @@ namespace Luft.Builder;
 public sealed partial class FunctionEmitter
 {
     public void EmitConstructor(ConstructorKey key, DeclaredFunction declared)
+        => WithInstance(key.Type, null, null, () => EmitConstructorCore(key, declared));
+
+    private void EmitConstructorCore(ConstructorKey key, DeclaredFunction declared)
     {
         _function = declared.Value;
         _scope = declared.Scope;
@@ -25,7 +28,7 @@ public sealed partial class FunctionEmitter
         var layout = _types.LayoutOf(key.Type, key.Type.Span);
         if (layout is null) return;
 
-        var parameters = ConstructorShapes.Of(key.Type, layout).First(s => s.Key == key).Parameters;
+        var parameters = ConstructorShapes.Of(key.Type, layout, _types.InfoOf(key.Type)?.Arguments).First(s => s.Key == key).Parameters;
 
         if (key.Kind == ConstructorKind.Explicit)
         {
@@ -110,7 +113,8 @@ public sealed partial class FunctionEmitter
             if (node is not null && _typed.BindingOf(node) is ConstructorBinding primaryBinding) (named, resolved) = (primaryBinding.Constructor, true);
         }
 
-        var shapes = ConstructorShapes.Of(baseType, baseLayout);
+        if (named is not null) named = _types.MapMember(baseType, named); // the checker bound the constructor of the generic definition
+        var shapes = ConstructorShapes.Of(baseType, baseLayout, _types.InfoOf(baseType)?.Arguments);
         ConstructorKey baseKey;
         if (arguments is not null)
         {
@@ -134,7 +138,7 @@ public sealed partial class FunctionEmitter
 
         if (!_constructors.TryGetValue(baseKey, out var declared))
         {
-            Fail($"The constructor of '{baseType.Name}' cannot be called yet, only non generic types can", span);
+            Fail($"The constructor of '{baseType.Name}' could not be found", span);
             return false;
         }
 
@@ -201,6 +205,9 @@ public sealed partial class FunctionEmitter
 
     // Runs the destructor body, then the destroy function of the base class. Releasing the fields follows with the runtime work.
     public void EmitDestroyer(ClassSymbol type, DeclaredFunction declared)
+        => WithInstance(type, null, null, () => EmitDestroyerCore(type, declared));
+
+    private void EmitDestroyerCore(ClassSymbol type, DeclaredFunction declared)
     {
         _function = declared.Value;
         _scope = declared.Scope;
@@ -224,18 +231,33 @@ public sealed partial class FunctionEmitter
     {
         value = default;
 
+        // A generic type is constructed as the instance its type arguments name
         var type = binding.Type;
-        var key = ConstructorShapes.Select(type, binding.Constructor, call.Arguments.Count);
+        var constructor = binding.Constructor;
+        if (type.GenericParameters.Count > 0)
+        {
+            var created = TypeOf(call) is { } constructed ? _types.SymbolOf(constructed, _scope) : null;
+            if (created is null || _types.InfoOf(created)?.Definition != type)
+            {
+                Fail($"The type arguments of '{type.Name}' could not be worked out here", call.Span);
+                return false;
+            }
+
+            type = created;
+            constructor = _types.MapMember(created, constructor);
+        }
+
+        var key = ConstructorShapes.Select(type, constructor, call.Arguments.Count);
         if (!_constructors.TryGetValue(key, out var declared))
         {
-            Fail($"'{type.Name}' cannot be constructed yet, only non generic classes, structs and records can", call.Span);
+            Fail($"'{type.Name}' cannot be constructed, no matching constructor was declared", call.Span);
             return false;
         }
 
         var layout = _types.LayoutOf(type, call.Span);
         if (layout is null) return false;
 
-        var parameters = ConstructorShapes.Of(type, layout).First(s => s.Key == key).Parameters;
+        var parameters = ConstructorShapes.Of(type, layout, _types.InfoOf(type)?.Arguments).First(s => s.Key == key).Parameters;
 
         LLVMValueRef pointer;
         if (type is ClassSymbol) pointer = AllocateObject(type, layout);

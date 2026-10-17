@@ -73,22 +73,39 @@ public sealed partial class FunctionEmitter : AeroThrower, IDisposable
     }
 
     public void Emit(FunctionSymbol symbol, DeclaredFunction declared)
-        => EmitBody(declared, symbol.Declaration.Parameters, symbol.Body, symbol.ReturnType);
+        => WithInstance(declared.Owner, null, null, () => EmitBody(declared, symbol.Declaration.Parameters, symbol.Body, Subst(symbol.ReturnType)));
 
     public void EmitInstance(FunctionSymbol symbol, DeclaredFunction declared, IReadOnlyDictionary<string, AeroType> arguments, IReadOnlyDictionary<string, TypeSymbol> pins)
+        => WithInstance(declared.Owner, arguments, pins, () => EmitBody(declared, symbol.Declaration.Parameters, symbol.Body, Subst(symbol.ReturnType)));
+
+    // Runs `body` with the generic names of an instance replaced: the type arguments of the instance owning the member plus those of a generic function
+    private void WithInstance(TypeSymbol? owner, IReadOnlyDictionary<string, AeroType>? arguments, IReadOnlyDictionary<string, TypeSymbol>? pins, Action body)
     {
-        var previous = _types.Substitution;
-        var previousPins = _types.Pinned;
-        _substitution = arguments;
-        _types.Substitution = arguments;
-        _types.Pinned = pins;
-        try { EmitBody(declared, symbol.Declaration.Parameters, symbol.Body, Subst(symbol.ReturnType)); }
+        var info = _types.InfoOf(owner);
+        var merged = TypeSubstitution.Merge(info?.Arguments, arguments);
+        var mergedPins = TypeSubstitution.Merge(info?.Pins, pins);
+        if (merged is null && mergedPins is null)
+        {
+            body();
+            return;
+        }
+
+        var (previous, previousPins, previousOwn) = (_types.Substitution, _types.Pinned, _substitution);
+        _substitution = merged;
+        _types.Substitution = merged;
+        _types.Pinned = mergedPins;
+
+        try { body(); }
         finally
         {
             _types.Substitution = previous;
             _types.Pinned = previousPins;
+            _substitution = previousOwn;
         }
     }
+
+    // A type written inside a generic type, seen from a call site: the instance's type arguments replace its generic names
+    private AeroType InOwner(AeroType type, DeclaredFunction declared) => TypeSubstitution.Apply(type, _types.InfoOf(declared.Owner)?.Arguments);
 
     private AeroType Subst(AeroType type) => TypeSubstitution.Apply(type, _substitution);
 

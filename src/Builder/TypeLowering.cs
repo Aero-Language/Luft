@@ -10,6 +10,19 @@ namespace Luft.Builder;
 
 public sealed record LayoutSlot(string Name, AeroType Type, int Index);
 
+// The class, struct or record made for one set of type arguments of a generic type. It shares the declaration nodes of its definition,
+// `Members` maps every member symbol of the definition to the copy living in the instance's scope.
+public sealed class InstanceInfo(TypeSymbol definition, Dictionary<string, AeroType> arguments, Dictionary<string, TypeSymbol> pins, string key)
+{
+    public TypeSymbol Definition { get; } = definition;
+    public Dictionary<string, AeroType> Arguments { get; } = arguments;
+    public Dictionary<string, TypeSymbol> Pins { get; } = pins;
+    public string Key { get; } = key;
+    public Dictionary<object, object> Members { get; } = new(ReferenceEqualityComparer.Instance);
+
+    public string DisplayName => $"{Definition.Name}<{Key}>";
+}
+
 public sealed class TypeLayout(LLVMTypeRef structType, IReadOnlyList<LLVMTypeRef> elements, IReadOnlyList<LayoutSlot> slots)
 {
     public LLVMTypeRef StructType { get; } = structType;
@@ -20,7 +33,7 @@ public sealed class TypeLayout(LLVMTypeRef structType, IReadOnlyList<LLVMTypeRef
     public LayoutSlot? Find(string name) => Slots.LastOrDefault(s => s.Name == name);
 }
 
-// Maps Aero types to LLVM types. Nothing here is generic aware: generic types fail until monomorphization exists.
+// Maps Aero types to LLVM types. A generic class, struct or record is lowered per set of type arguments, as an instance symbol.
 public sealed class TypeLowering : AeroThrower
 {
     public const int VTableSlot = 0;
@@ -33,6 +46,16 @@ public sealed class TypeLowering : AeroThrower
     private readonly Dictionary<string, LLVMTypeRef> _primitives = new();
     private readonly Dictionary<TypeSymbol, TypeLayout> _layouts = new();
     private readonly HashSet<TypeSymbol> _building = [];
+    private readonly Dictionary<(TypeSymbol Definition, string Key), TypeSymbol> _instances = new();
+    private readonly Dictionary<TypeSymbol, InstanceInfo> _info = new(ReferenceEqualityComparer.Instance);
+    private readonly Dictionary<object, TypeSymbol> _memberOwners = new(ReferenceEqualityComparer.Instance);
+    private readonly Queue<TypeSymbol> _created = new();
+    private bool _indexed;
+    private bool _flushing;
+    private int _depth;
+
+    // Called once an outermost lowering step is done, so an instance is never declared in the middle of a layout
+    public Action<TypeSymbol>? OnInstance { get; set; }
 
     public bool HasErrors { get; private set; }
 
@@ -120,6 +143,13 @@ public sealed class TypeLowering : AeroThrower
     // Reports and returns false when the type can't be lowered
     public bool TryLower(AeroType type, TypeScope scope, SourceSpan span, out LLVMTypeRef result)
     {
+        _depth++;
+        try { return TryLowerCore(type, scope, span, out result); }
+        finally { Leave(); }
+    }
+
+    private bool TryLowerCore(AeroType type, TypeScope scope, SourceSpan span, out LLVMTypeRef result)
+    {
         result = Ptr;
         type = TypeSubstitution.Apply(type, Substitution);
         if (!Core(type, scope, span, out var core, out var isClass)) return false;
@@ -180,8 +210,8 @@ public sealed class TypeLowering : AeroThrower
                 result = LambdaStruct;
                 return ok;
             case GenericType g:
-                Fail($"Generic type '{g}' cannot be lowered yet, generics need monomorphization", span);
-                return false;
+                var instance = InstanceOf(g, scope, span, true);
+                return instance is not null && LowerSymbol(instance, span, out result, out isClass);
             case GenericParameterType gp:
                 Fail($"Generic parameter '{gp.Name}' needs a concrete type before it can be lowered", span);
                 return false;
@@ -220,6 +250,14 @@ public sealed class TypeLowering : AeroThrower
             return false;
         }
 
+        return LowerSymbol(symbol, span, out result, out isClass);
+    }
+
+    private bool LowerSymbol(TypeSymbol symbol, SourceSpan span, out LLVMTypeRef result, out bool isClass)
+    {
+        result = Ptr;
+        isClass = false;
+
         switch (symbol)
         {
             case ClassSymbol:
@@ -243,12 +281,37 @@ public sealed class TypeLowering : AeroThrower
     }
 
     // The declaration behind a plain named type, null for primitives, arrays, lambdas and generics
-    public TypeSymbol? SymbolOf(AeroType type, TypeScope scope) => type is ScalarType s ? Find(s.Name, scope, 0) : null;
+    public TypeSymbol? SymbolOf(AeroType type, TypeScope scope)
+    {
+        _depth++;
+        try
+        {
+            return type switch
+            {
+                ScalarType s => Find(s.Name, scope, 0),
+                GenericType g => InstanceOf(Normalize(g), scope, SourceSpan.Unknown, false),
+                _ => null
+            };
+        }
+        finally { Leave(); }
+    }
 
     // The first listed type when it is a class, struct or record of the same kind
-    public TypeSymbol? BaseOf(TypeSymbol symbol) => TryBase(symbol, symbol.Span, out var baseSymbol) ? baseSymbol : null;
+    public TypeSymbol? BaseOf(TypeSymbol symbol)
+    {
+        _depth++;
+        try { return TryBase(symbol, symbol.Span, out var baseSymbol) ? baseSymbol : null; }
+        finally { Leave(); }
+    }
 
     public TypeLayout? LayoutOf(TypeSymbol symbol, SourceSpan span)
+    {
+        _depth++;
+        try { return LayoutOfCore(symbol, span); }
+        finally { Leave(); }
+    }
+
+    private TypeLayout? LayoutOfCore(TypeSymbol symbol, SourceSpan span)
     {
         if (_layouts.TryGetValue(symbol, out var cached)) return cached;
 
@@ -268,6 +331,12 @@ public sealed class TypeLowering : AeroThrower
             return null;
         }
 
+        // Member types are written with the generic names of the definition, an instance substitutes its arguments
+        var info = InfoOf(symbol);
+        var (previousSubstitution, previousPins) = (Substitution, Pinned);
+        Substitution = info?.Arguments;
+        Pinned = info?.Pins;
+
         try
         {
             return BuildLayout(symbol, span);
@@ -275,6 +344,8 @@ public sealed class TypeLowering : AeroThrower
         finally
         {
             _building.Remove(symbol);
+            Substitution = previousSubstitution;
+            Pinned = previousPins;
         }
     }
 
@@ -315,12 +386,13 @@ public sealed class TypeLowering : AeroThrower
                 continue;
             }
 
-            slots.Add(new LayoutSlot(name, type, elements.Count));
+            slots.Add(new LayoutSlot(name, TypeSubstitution.Apply(type, Substitution), elements.Count));
             elements.Add(lowered);
         }
         if (!ok) return null;
 
-        var structName = symbol.Module.ModulePath.Length == 0 ? symbol.Name : $"{symbol.Module.ModulePath}.{symbol.Name}";
+        var shownName = InfoOf(symbol)?.DisplayName ?? symbol.Name;
+        var structName = symbol.Module.ModulePath.Length == 0 ? shownName : $"{symbol.Module.ModulePath}.{shownName}";
         var layout = new TypeLayout(Named(structName, elements.ToArray()), elements, slots);
         _layouts[symbol] = layout;
         return layout;
@@ -400,12 +472,168 @@ public sealed class TypeLowering : AeroThrower
 
         if (arity > 0)
         {
-            Fail($"The generic base type '{first}' cannot be lowered yet, generics need monomorphization", span);
-            return false;
+            // The base is written with the generic names of the deriving type, an instance of it substitutes its arguments first
+            var applied = TypeSubstitution.Apply(first!, InfoOf(symbol)?.Arguments);
+            if (applied is not GenericType appliedGeneric || InstanceOf(appliedGeneric, symbol.Scope, span, true) is not { } instance) return false;
+
+            baseSymbol = instance;
+            return true;
         }
 
         baseSymbol = found;
         return true;
+    }
+
+    public InstanceInfo? InfoOf(TypeSymbol? symbol) => symbol is not null && _info.TryGetValue(symbol, out var info) ? info : null;
+
+    // The generic type a member symbol was declared in, null for members of anything else
+    public TypeSymbol? DefinitionOfMember(object member)
+    {
+        if (!_indexed)
+        {
+            _indexed = true;
+            foreach (var module in _table.Modules.Values) IndexMembers(module.Scope);
+        }
+        return _memberOwners.GetValueOrDefault(member);
+    }
+
+    // The copy of a definition's member that lives in an instance, the member itself when there is none
+    public T MapMember<T>(TypeSymbol? owner, T member) where T : class
+        => member is not null && InfoOf(owner) is { } info && info.Members.TryGetValue(member, out var copy) ? (T)copy : member;
+
+    private void IndexMembers(TypeScope scope)
+    {
+        foreach (var symbol in scope.Types.Values.SelectMany(l => l))
+        {
+            if (symbol.GenericParameters.Count > 0 && symbol is ClassSymbol or StructSymbol or RecordSymbol)
+            {
+                foreach (var m in symbol.Scope.Functions.Values.SelectMany(l => l)) _memberOwners[m] = symbol;
+                foreach (var m in symbol.Scope.Properties.Values.SelectMany(l => l)) _memberOwners[m] = symbol;
+                foreach (var m in symbol.Scope.Fields.Values.SelectMany(l => l)) _memberOwners[m] = symbol;
+                foreach (var m in symbol.Scope.Operators.Values.SelectMany(l => l)) _memberOwners[m] = symbol;
+                foreach (var m in symbol.Scope.Constructors) _memberOwners[m] = symbol;
+            }
+            IndexMembers(symbol.Scope);
+        }
+    }
+
+    private GenericType Normalize(GenericType type) => TypeSubstitution.Apply(type, Substitution) as GenericType ?? type;
+
+    private void Leave()
+    {
+        if (--_depth == 0) Flush();
+    }
+
+    // Declares the instances created so far, which can create more
+    private void Flush()
+    {
+        if (_flushing) return;
+
+        _flushing = true;
+        try
+        {
+            while (_created.Count > 0) OnInstance?.Invoke(_created.Dequeue());
+        }
+        finally { _flushing = false; }
+    }
+
+    // The instance a generic class, struct or record type stands for; `report` says whether a type that is no such thing is an error
+    private TypeSymbol? InstanceOf(GenericType type, TypeScope scope, SourceSpan span, bool report)
+    {
+        var definition = Find(type.Definition.Name, scope, type.TypeArguments.Count);
+        if (definition is not (ClassSymbol or StructSymbol or RecordSymbol) || definition.GenericParameters.Count == 0)
+        {
+            if (report) Fail($"'{type}' is not a generic class, struct or record, other generic types cannot be lowered yet", span);
+            return null;
+        }
+
+        var arguments = new List<AeroType>();
+        foreach (var argument in type.TypeArguments)
+        {
+            if (TypeText.Parse(argument) is not { } parsed)
+            {
+                Fail($"The type argument '{argument.Name}' of '{type}' cannot be lowered yet", span);
+                return null;
+            }
+            arguments.Add(parsed);
+        }
+
+        return Instantiate(definition, arguments, scope, span);
+    }
+
+    // One instance per distinct set of arguments, created on first use
+    public TypeSymbol? Instantiate(TypeSymbol definition, IReadOnlyList<AeroType> arguments, TypeScope scope, SourceSpan span)
+    {
+        _depth++;
+        try { return InstantiateCore(definition, arguments, scope, span); }
+        finally { Leave(); }
+    }
+
+    private TypeSymbol? InstantiateCore(TypeSymbol definition, IReadOnlyList<AeroType> arguments, TypeScope scope, SourceSpan span)
+    {
+        if (arguments.Count != definition.GenericParameters.Count)
+        {
+            Fail($"'{definition.Name}' takes {definition.GenericParameters.Count} type arguments but got {arguments.Count}", span);
+            return null;
+        }
+
+        var map = new Dictionary<string, AeroType>();
+        for (var i = 0; i < arguments.Count; i++)
+        {
+            if (arguments[i].IsAuto || arguments[i].IsError || arguments[i] is GenericParameterType)
+            {
+                Fail($"The type argument '{definition.GenericParameters[i].Name}' of '{definition.Name}' could not be inferred", span);
+                return null;
+            }
+            map[definition.GenericParameters[i].Name] = arguments[i];
+        }
+
+        var key = TypeSubstitution.Key(definition.GenericParameters, map);
+        if (_instances.TryGetValue((definition, key), out var known)) return known;
+
+        var info = new InstanceInfo(definition, map, Pin(map.Values, scope), key);
+        var instance = CloneType(definition, info);
+
+        _instances[(definition, key)] = instance;
+        _info[instance] = info;
+        _created.Enqueue(instance);
+        return instance;
+    }
+
+    // A non generic copy of the definition: same declaration nodes, its own scope of member symbols
+    private static TypeSymbol CloneType(TypeSymbol definition, InstanceInfo info)
+    {
+        var scope = new TypeScope(definition.Scope.ContainingScope)
+        {
+            PrimaryConstructor = definition.Scope.PrimaryConstructor,
+            Destructor = definition.Scope.Destructor
+        };
+
+        foreach (var (name, list) in definition.Scope.Functions)
+            scope.Functions[name] = list.Select(f => Copy(info, f, new FunctionSymbol(f.Name, f.Access, f.Module, f.Declaration) { ExtensionTarget = f.ExtensionTarget })).ToList();
+        foreach (var (name, list) in definition.Scope.Properties)
+            scope.Properties[name] = list.Select(p => Copy(info, p, new PropertySymbol(p.Name, p.Access, p.Declaration) { ExtensionTarget = p.ExtensionTarget })).ToList();
+        foreach (var (name, list) in definition.Scope.Fields)
+            scope.Fields[name] = list.Select(f => Copy(info, f, new FieldSymbol(f.Name, f.Access, f.Declaration))).ToList();
+        foreach (var (op, list) in definition.Scope.Operators)
+            scope.Operators[op] = list.Select(o => Copy(info, o, new OperatorSymbol(o.Op, o.Access, o.Module, o.Declaration))).ToList();
+        foreach (var c in definition.Scope.Constructors)
+            scope.Constructors.Add(Copy(info, c, new ConstructorSymbol(c.Access, c.Declaration)));
+
+        var none = ValueList<GenericParameterType>.Empty;
+        return definition switch
+        {
+            ClassSymbol c => new ClassSymbol(c.Node, c.Module, definition.Scope.ContainingScope) { GenericParameters = none, Scope = scope },
+            StructSymbol s => new StructSymbol(s.Node, s.Module, definition.Scope.ContainingScope) { GenericParameters = none, Scope = scope },
+            RecordSymbol r => new RecordSymbol(r.Node, r.Module, definition.Scope.ContainingScope) { GenericParameters = none, Scope = scope },
+            _ => throw new InvalidOperationException($"'{definition.Name}' cannot be instantiated")
+        };
+    }
+
+    private static T Copy<T>(InstanceInfo info, T original, T copy) where T : class
+    {
+        info.Members[original] = copy;
+        return copy;
     }
 
     private TypeSymbol? Find(string name, TypeScope scope, int arity)

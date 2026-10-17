@@ -13,10 +13,14 @@ public sealed partial class FunctionEmitter
     private readonly record struct Operand(LLVMValueRef Value, AeroType Type);
 
     public void EmitOperator(OperatorSymbol symbol, DeclaredFunction declared)
-        => EmitBody(declared, symbol.Declaration.Parameters, symbol.Body, symbol.ReturnType);
+        => WithInstance(declared.Owner, null, null, () => EmitBody(declared, symbol.Declaration.Parameters, symbol.Body, Subst(symbol.ReturnType)));
 
-    private bool TryGetOperator(OperatorSymbol op, SourceSpan span, out DeclaredFunction declared)
+    // An operator of a generic type is looked up in the instance of the operand it was found through
+    private bool TryGetOperator(ref OperatorSymbol op, ExpressionNode operand, SourceSpan span, out DeclaredFunction declared)
     {
+        if (_types.DefinitionOfMember(op) is { } definition && FindInstance(definition, operand, TypeOf(operand)) is { } owner)
+            op = _types.MapMember(owner, op);
+
         if (_members.Operators.TryGetValue(op, out var found))
         {
             declared = found;
@@ -24,7 +28,7 @@ public sealed partial class FunctionEmitter
         }
 
         declared = null!;
-        Fail($"The operator '{op.Op.AsString()}' cannot be called yet, only non generic types can declare operators", span);
+        Fail($"The operator '{op.Op.AsString()}' cannot be called, it was not declared", span);
         return false;
     }
 
@@ -32,7 +36,7 @@ public sealed partial class FunctionEmitter
     private bool TryLowerOperatorCall(OperatorSymbol op, ExpressionNode left, ExpressionNode? right, SourceSpan span, out LLVMValueRef value)
     {
         value = default;
-        if (!TryGetOperator(op, span, out var declared)) return false;
+        if (!TryGetOperator(ref op, left, span, out var declared)) return false;
 
         if (op.IsStatic)
         {
@@ -68,7 +72,7 @@ public sealed partial class FunctionEmitter
                 return false;
             }
 
-            arguments[i] = Coerce(operands[i].Value, operands[i].Type, parameters[i].Type, span);
+            arguments[i] = Coerce(operands[i].Value, operands[i].Type, InOwner(parameters[i].Type, declared), span);
         }
 
         var isVoid = op.ReturnType == AeroType.Void;
@@ -98,7 +102,7 @@ public sealed partial class FunctionEmitter
             }
 
             if (!TryLowerValue(right, out var argument)) return false;
-            arguments.Add(Coerce(argument, TypeOf(right), parameter.Type, right.Span));
+            arguments.Add(Coerce(argument, TypeOf(right), InOwner(parameter.Type, declared), right.Span));
         }
 
         var isVoid = op.ReturnType == AeroType.Void;
@@ -111,7 +115,7 @@ public sealed partial class FunctionEmitter
     private bool TryLowerStepOverload(UnaryExpressionNode u, OperatorSymbol op, out LLVMValueRef value)
     {
         value = default;
-        if (!TryGetOperator(op, u.Span, out var declared)) return false;
+        if (!TryGetOperator(ref op, u.Operand, u.Span, out var declared)) return false;
         if (!TryGetAddress(u.Operand, out var address, out var slotType, out _)) return false;
 
         var old = _builder.BuildLoad2(slotType, address, "old");
@@ -150,7 +154,7 @@ public sealed partial class FunctionEmitter
     // target op= value as target = target op value, the result of the operator is written back
     private void LowerOverloadedCompound(AssignmentStatementNode a, OperatorSymbol op)
     {
-        if (!TryGetOperator(op, a.Span, out var declared)) return;
+        if (!TryGetOperator(ref op, a.Target, a.Span, out var declared)) return;
 
         if (IsPropertyAccess(a.Target))
         {

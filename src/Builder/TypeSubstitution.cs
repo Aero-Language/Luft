@@ -18,9 +18,7 @@ public static class TypeSubstitution
             case ArrayType a:
                 return new ArrayType(Apply(a.ElementType, map), a.IsRef, a.IsNullable);
             case GenericType g:
-                var arguments = g.TypeArguments.Select(p => map.TryGetValue(p.Name, out var bound)
-                    ? (bound is ScalarType b ? new GenericParameterType(b.Name, null, b.IsRef || p.IsRef, b.IsNullable || p.IsNullable) : new GenericParameterType(bound.ToString()))
-                    : p).ToValueList();
+                var arguments = g.TypeArguments.Select(p => TypeText.Parse(p) is { } parsed ? TypeText.ToArgument(Apply(parsed, map)) : p).ToValueList();
                 return new GenericType(g.Definition, arguments);
             case LambdaType l:
                 return new LambdaType(l.Parameters.Select(p => new TypeParam(p.Name, Apply(p.Type, map))).ToValueList(), Apply(l.ReturnType, map), l.IsRef, l.IsNullable);
@@ -29,7 +27,7 @@ public static class TypeSubstitution
         }
     }
 
-    private static AeroType WithFlags(AeroType type, bool isRef, bool isNullable)
+    public static AeroType WithFlags(AeroType type, bool isRef, bool isNullable)
     {
         if (!isRef && !isNullable) return type;
 
@@ -38,8 +36,20 @@ public static class TypeSubstitution
             ScalarType s => s with { IsRef = s.IsRef || isRef, IsNullable = s.IsNullable || isNullable },
             ArrayType a => new ArrayType(a.ElementType, a.IsRef || isRef, a.IsNullable || isNullable),
             LambdaType l => new LambdaType(l.Parameters, l.ReturnType, l.IsRef || isRef, l.IsNullable || isNullable),
+            GenericType g => new GenericType(WithFlags(g.Definition, isRef, isNullable), g.TypeArguments),
             _ => type
         };
+    }
+
+    // Both sets of entries, the second one wins; null when there are none
+    public static Dictionary<string, T>? Merge<T>(IReadOnlyDictionary<string, T>? first, IReadOnlyDictionary<string, T>? second)
+    {
+        if (first is null && second is null) return null;
+
+        var merged = new Dictionary<string, T>();
+        if (first is not null) foreach (var (k, v) in first) merged[k] = v;
+        if (second is not null) foreach (var (k, v) in second) merged[k] = v;
+        return merged;
     }
 
     // One entry per generic parameter, in declaration order

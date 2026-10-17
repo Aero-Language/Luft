@@ -33,11 +33,13 @@ public sealed partial class FunctionEmitter
         aeroType = AeroType.Error;
 
         expression = StripScopes(expression);
-        if (_typed.BindingOf(expression) is not FieldBinding { Field: var field })
+        if (_typed.BindingOf(expression) is not FieldBinding { Field: var bound })
         {
             Fail("This is not a field", expression.Span);
             return false;
         }
+
+        var field = OnInstance(bound, expression);
 
         // Static, const and module level fields are globals, so there is no object to start from
         if (_members.Fields.TryGetValue(field, out var global))

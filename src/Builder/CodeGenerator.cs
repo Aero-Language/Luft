@@ -26,7 +26,7 @@ public sealed class CodeGenerator : AeroThrower, IDisposable
     private bool _traitTablesReady;
 
     // Where a generic function was declared, kept until a call asks for an instance
-    private sealed record GenericTemplate(TypeScope Scope, TypeSymbol? Owner, string Path, bool HasSelf);
+    private sealed record GenericTemplate(TypeScope Scope, TypeSymbol? Owner, string Path, bool HasSelf, AeroType? Target = null);
     private readonly MemberTable _members = new();
     private LLVMValueRef _staticInit; // unset when there is nothing to initialize
     private ModuleSymbol? _declaringModule;
@@ -183,11 +183,20 @@ public sealed class CodeGenerator : AeroThrower, IDisposable
 
         if (template.HasSelf) type = LLVMTypeRef.CreateFunction(type.Value.ReturnType, new[] { _types.Ptr }.Concat(type.Value.GetParamTypes()).ToArray());
 
+        // An extension's receiver is its target with the arguments filled in
+        var receiver = template.Target is null ? null : TypeSubstitution.Apply(template.Target, map);
+        var owner = template.Owner;
+        if (receiver is not null)
+        {
+            var found = _types.SymbolOf(receiver, template.Scope);
+            owner = found is ClassSymbol or StructSymbol or RecordSymbol ? found : null;
+        }
+
         var name = $"{InternalName(function, template.Path)}<{key}>";
         var value = Module.AddFunction(name, type.Value);
         value.Linkage = LLVMLinkage.LLVMInternalLinkage;
 
-        var declared = new DeclaredFunction(value, type.Value, template.Scope, template.Owner, template.HasSelf);
+        var declared = new DeclaredFunction(value, type.Value, template.Scope, owner, template.HasSelf, receiver);
         known[key] = declared;
         _pending.Enqueue((function, declared, map, pins));
         return declared;
@@ -279,6 +288,13 @@ public sealed class CodeGenerator : AeroThrower, IDisposable
 
         try
         {
+            if (instance is TraitSymbol traitInstance)
+            {
+                DeclareTrait(traitInstance, path, false, _symbols);
+                RegisterTraitMethods(traitInstance);
+                return;
+            }
+
             _valueTypes.Add((instance, path, module));
             if (instance is ClassSymbol classSymbol) _classes.Add((classSymbol, path, module));
 
@@ -444,8 +460,17 @@ public sealed class CodeGenerator : AeroThrower, IDisposable
             if (f.Access == AccessMod.Private) value.Linkage = LLVMLinkage.LLVMInternalLinkage;
             else if (!external) value.Visibility = LLVMVisibility.LLVMHiddenVisibility;
 
-            _functions[f] = new DeclaredFunction(value, type.Value, trait.Scope, null, true, new ScalarType(trait.Name));
+            _functions[f] = new DeclaredFunction(value, type.Value, trait.Scope, null, true, TraitTypeOf(trait));
         }
+    }
+
+    // The type `self` stands for in a trait's default methods; an instance of a generic trait is written with its arguments
+    private AeroType TraitTypeOf(TraitSymbol trait)
+    {
+        if (_types.InfoOf(trait) is not { } info) return new ScalarType(trait.Name);
+
+        var arguments = info.Definition.GenericParameters.Select(g => TypeText.ToArgument(info.Arguments[g.Name])).ToValueList();
+        return new GenericType(new ScalarType(trait.Name), arguments);
     }
 
     private static IEnumerable<AeroType> ListedTypesOf(TypeSymbol type) => type switch
@@ -463,7 +488,7 @@ public sealed class CodeGenerator : AeroThrower, IDisposable
         if (!seen.Add(trait)) return;
 
         foreach (var listed in ListedTypesOf(trait))
-            if (_types.SymbolOf(listed, trait.Scope) is TraitSymbol baseTrait && baseTrait.GenericParameters.Count == 0) CollectTraitMethods(baseTrait, methods, seen);
+            if (_types.SymbolOf(TypeSubstitution.Apply(listed, _types.InfoOf(trait)?.Arguments), trait.Scope) is TraitSymbol baseTrait && baseTrait.GenericParameters.Count == 0) CollectTraitMethods(baseTrait, methods, seen);
 
         methods.AddRange(trait.Scope.Functions.Values.SelectMany(l => l)
             .Where(f => f.GenericParameters.Count == 0 && !f.MemberMods.HasFlag(MemberMod.Static))
@@ -480,7 +505,7 @@ public sealed class CodeGenerator : AeroThrower, IDisposable
             if (result.Contains(trait)) return;
             result.Add(trait);
             foreach (var listed in ListedTypesOf(trait))
-                if (_types.SymbolOf(listed, trait.Scope) is TraitSymbol baseTrait && baseTrait.GenericParameters.Count == 0) Add(baseTrait);
+                if (_types.SymbolOf(TypeSubstitution.Apply(listed, _types.InfoOf(trait)?.Arguments), trait.Scope) is TraitSymbol baseTrait && baseTrait.GenericParameters.Count == 0) Add(baseTrait);
         }
 
         for (var link = type; link is not null && !result.Contains((link as TraitSymbol)!); link = _types.BaseOf(link))
@@ -497,19 +522,24 @@ public sealed class CodeGenerator : AeroThrower, IDisposable
     // One constant table per type and trait it implements: the function behind every method of the trait, taking the data pointer as self
     private void DeclareTraitVTables()
     {
-        foreach (var (trait, _, _) in _traits)
-        {
-            var methods = new List<FunctionSymbol>();
-            CollectTraitMethods(trait, methods, new HashSet<TraitSymbol>());
-
-            _members.TraitMethods[trait] = methods;
-            for (var i = 0; i < methods.Count; i++) _members.TraitSlots[(trait, methods[i])] = i;
-        }
+        // Instances of generic traits register themselves when they are created, which can happen while this runs
+        foreach (var (trait, _, _) in _traits.ToList()) RegisterTraitMethods(trait);
 
         var types = _valueTypes.ToList();
         _traitTablesReady = true;
 
         foreach (var (type, path, module) in types) DeclareTraitTables(type, path, module);
+    }
+
+    private void RegisterTraitMethods(TraitSymbol trait)
+    {
+        if (_members.TraitMethods.ContainsKey(trait)) return;
+
+        var methods = new List<FunctionSymbol>();
+        CollectTraitMethods(trait, methods, new HashSet<TraitSymbol>());
+
+        _members.TraitMethods[trait] = methods;
+        for (var i = 0; i < methods.Count; i++) _members.TraitSlots[(trait, methods[i])] = i;
     }
 
     private void DeclareTraitTables(TypeSymbol type, string path, ModuleSymbol module)
@@ -541,7 +571,7 @@ public sealed class CodeGenerator : AeroThrower, IDisposable
     // The type's own method with the same name and parameters, searched up its base types; the trait's default otherwise
     private LLVMValueRef EntryFor(TypeSymbol type, TraitSymbol trait, FunctionSymbol method, string path, ModuleSymbol module, LLVMValueRef table)
     {
-        var signature = SignatureOf(method);
+        var signature = SignatureOf(method, _types.InfoOf(trait)?.Arguments);
         for (var link = type; link is not null; link = _types.BaseOf(link))
         {
             var found = link.Scope.Functions.Values.SelectMany(l => l)
@@ -778,7 +808,14 @@ public sealed class CodeGenerator : AeroThrower, IDisposable
     {
         foreach (var f in scope.ExtensionFunctions.Values.SelectMany(l => l))
         {
-            if (f.GenericParameters.Count > 0 || f.ExtensionTarget is not { } target || target is GenericType || ContainsGeneric(target, scope)) continue;
+            if (f.ExtensionTarget is not { } target) continue;
+
+            // A generic extension, or one whose target names its generics, is instantiated per call like a generic function
+            if (f.GenericParameters.Count > 0 || ContainsGeneric(target, scope, f.GenericParameters))
+            {
+                _templates[f] = new GenericTemplate(scope, null, "", true, target);
+                continue;
+            }
 
             var type = _types.LowerFunction(f.ReturnType, f.Parameters.Select(p => p.Type), scope, f.Span);
             if (type is null) continue;
@@ -807,7 +844,7 @@ public sealed class CodeGenerator : AeroThrower, IDisposable
     {
         foreach (var p in scope.ExtensionProperties.Values.SelectMany(l => l))
         {
-            if (p.ExtensionTarget is not { } target || target is GenericType || ContainsGeneric(target, scope)) continue;
+            if (p.ExtensionTarget is not { } target || ContainsGeneric(target, scope, [])) continue;
 
             var resolved = _types.SymbolOf(target, scope);
             var owner = resolved is ClassSymbol or StructSymbol or RecordSymbol ? resolved : null;
@@ -818,11 +855,20 @@ public sealed class CodeGenerator : AeroThrower, IDisposable
         }
     }
 
-    private static bool ContainsGeneric(AeroType type, TypeScope scope)
+    private static bool ContainsGeneric(AeroType type, TypeScope scope, IEnumerable<GenericParameterType> own)
     {
-        var generics = scope.AllGenerics().ToHashSet();
-        return type is ScalarType s && generics.Contains(s.Name) || type is ArrayType a && ContainsGeneric(a.ElementType, scope);
+        var generics = scope.AllGenerics().Concat(own.Select(g => g.Name)).ToHashSet();
+        return Mentions(type, generics);
     }
+
+    private static bool Mentions(AeroType type, HashSet<string> generics) => type switch
+    {
+        ScalarType s => generics.Contains(s.Name),
+        ArrayType a => Mentions(a.ElementType, generics),
+        LambdaType l => Mentions(l.ReturnType, generics) || l.Parameters.Any(p => Mentions(p.Type, generics)),
+        GenericType g => g.TypeArguments.Any(a => generics.Contains(a.Name) || TypeText.Parse(a) is { } parsed && Mentions(parsed, generics)),
+        _ => false
+    };
 
     // Module_Target_Name, a different target keeps equal member names apart and only overloads get a parameter suffix
     private static string ExportExtensionName(FunctionSymbol f, AeroType target, TypeScope scope)

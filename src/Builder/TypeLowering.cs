@@ -49,9 +49,9 @@ public sealed class TypeLowering : AeroThrower
     private readonly Dictionary<(TypeSymbol Definition, string Key), TypeSymbol> _instances = new();
     private readonly Dictionary<TypeSymbol, InstanceInfo> _info = new(ReferenceEqualityComparer.Instance);
     private readonly Dictionary<object, TypeSymbol> _memberOwners = new(ReferenceEqualityComparer.Instance);
+    private readonly Dictionary<TypeScope, InstanceInfo> _infoByScope = new(ReferenceEqualityComparer.Instance);
     private readonly Queue<TypeSymbol> _created = new();
     private bool _indexed;
-    private bool _flushing;
     private int _depth;
 
     // Called once an outermost lowering step is done, so an instance is never declared in the middle of a layout
@@ -486,6 +486,9 @@ public sealed class TypeLowering : AeroThrower
 
     public InstanceInfo? InfoOf(TypeSymbol? symbol) => symbol is not null && _info.TryGetValue(symbol, out var info) ? info : null;
 
+    // The instance whose members live in this scope, for functions that have no owner symbol (default methods of a trait)
+    public InstanceInfo? InfoFor(TypeScope scope) => _infoByScope.TryGetValue(scope, out var info) ? info : null;
+
     // The generic type a member symbol was declared in, null for members of anything else
     public TypeSymbol? DefinitionOfMember(object member)
     {
@@ -505,7 +508,7 @@ public sealed class TypeLowering : AeroThrower
     {
         foreach (var symbol in scope.Types.Values.SelectMany(l => l))
         {
-            if (symbol.GenericParameters.Count > 0 && symbol is ClassSymbol or StructSymbol or RecordSymbol)
+            if (symbol.GenericParameters.Count > 0 && symbol is ClassSymbol or StructSymbol or RecordSymbol or TraitSymbol)
             {
                 foreach (var m in symbol.Scope.Functions.Values.SelectMany(l => l)) _memberOwners[m] = symbol;
                 foreach (var m in symbol.Scope.Properties.Values.SelectMany(l => l)) _memberOwners[m] = symbol;
@@ -524,26 +527,19 @@ public sealed class TypeLowering : AeroThrower
         if (--_depth == 0) Flush();
     }
 
-    // Declares the instances created so far, which can create more
+    // Declares the instances created so far, which can create more; declaring one can ask for another one, so this may run inside itself
     private void Flush()
     {
-        if (_flushing) return;
-
-        _flushing = true;
-        try
-        {
-            while (_created.Count > 0) OnInstance?.Invoke(_created.Dequeue());
-        }
-        finally { _flushing = false; }
+        while (_created.Count > 0) OnInstance?.Invoke(_created.Dequeue());
     }
 
     // The instance a generic class, struct or record type stands for; `report` says whether a type that is no such thing is an error
     private TypeSymbol? InstanceOf(GenericType type, TypeScope scope, SourceSpan span, bool report)
     {
         var definition = Find(type.Definition.Name, scope, type.TypeArguments.Count);
-        if (definition is not (ClassSymbol or StructSymbol or RecordSymbol) || definition.GenericParameters.Count == 0)
+        if (definition is not (ClassSymbol or StructSymbol or RecordSymbol or TraitSymbol) || definition.GenericParameters.Count == 0)
         {
-            if (report) Fail($"'{type}' is not a generic class, struct or record, other generic types cannot be lowered yet", span);
+            if (report) Fail($"'{type}' is not a generic class, struct, record or trait, other generic types cannot be lowered yet", span);
             return null;
         }
 
@@ -596,6 +592,7 @@ public sealed class TypeLowering : AeroThrower
 
         _instances[(definition, key)] = instance;
         _info[instance] = info;
+        _infoByScope[instance.Scope] = info;
         _created.Enqueue(instance);
         return instance;
     }
@@ -626,6 +623,7 @@ public sealed class TypeLowering : AeroThrower
             ClassSymbol c => new ClassSymbol(c.Node, c.Module, definition.Scope.ContainingScope) { GenericParameters = none, Scope = scope },
             StructSymbol s => new StructSymbol(s.Node, s.Module, definition.Scope.ContainingScope) { GenericParameters = none, Scope = scope },
             RecordSymbol r => new RecordSymbol(r.Node, r.Module, definition.Scope.ContainingScope) { GenericParameters = none, Scope = scope },
+            TraitSymbol t => new TraitSymbol(t.Node, t.Module, definition.Scope.ContainingScope) { GenericParameters = none, Scope = scope },
             _ => throw new InvalidOperationException($"'{definition.Name}' cannot be instantiated")
         };
     }

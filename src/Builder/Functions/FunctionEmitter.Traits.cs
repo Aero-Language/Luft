@@ -59,6 +59,7 @@ public sealed partial class FunctionEmitter
         else receiverType = _selfReceiver;
 
         if (receiverType is null || _types.SymbolOf(receiverType, _scope) is not TraitSymbol trait) return true;
+        function = _types.MapMember(trait, function); // the checker bound the method of the generic definition
         if (!_members.TraitSlots.TryGetValue((trait, function), out var slot)) return true;
 
         handled = true;
@@ -75,20 +76,25 @@ public sealed partial class FunctionEmitter
         var entry = _builder.BuildGEP2(_types.Ptr, table, new[] { LLVMValueRef.CreateConstInt(_context.Int32Type, (ulong)slot) }, "slot");
         var callee = _builder.BuildLoad2(_types.Ptr, entry, "method");
 
-        var lowered = _types.LowerFunction(function.ReturnType, function.Parameters.Select(p => p.Type), trait.Scope, call.Span);
+        // Parameter types of a generic trait's method are written with its generic names
+        var arguments0 = _types.InfoOf(trait)?.Arguments;
+        var parameters = function.Parameters.Select(p => p with { Type = TypeSubstitution.Apply(p.Type, arguments0) }).ToList();
+        var returnType = TypeSubstitution.Apply(function.ReturnType, arguments0);
+
+        var lowered = _types.LowerFunction(returnType, parameters.Select(p => p.Type), trait.Scope, call.Span);
         if (lowered is null) return false;
         var type = LLVMTypeRef.CreateFunction(lowered.Value.ReturnType, new[] { _types.Ptr }.Concat(lowered.Value.GetParamTypes()).ToArray(), false);
 
         var arguments = new List<LLVMValueRef> { data };
-        for (var i = 0; i < function.Parameters.Count; i++)
+        for (var i = 0; i < parameters.Count; i++)
         {
-            var parameter = function.Parameters[i];
+            var parameter = parameters[i];
             var source = i < call.Arguments.Count ? call.Arguments[i] : parameter.Initializer;
             if (!TryLowerArgument(source, parameter.Type, parameter.Name, call.Span, out var argument)) return false;
             arguments.Add(argument);
         }
 
-        var isVoid = function.ReturnType == AeroType.Void;
+        var isVoid = returnType == AeroType.Void;
         var result = _builder.BuildCall2(type, callee, arguments.ToArray(), isVoid ? "" : "call");
         if (!isVoid) value = result;
         return true;

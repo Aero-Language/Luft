@@ -949,6 +949,9 @@ public class BodyResolver : AeroThrower
             if (explicitArgs is not null && explicitArgs.Count == o.GenericParameters.Count)
                 for (int i = 0; i < explicitArgs.Count; i++) bound[o.GenericParameters[i].Name] = explicitArgs[i];
 
+            // An extension's target can bind generics of its own: `fun List<T>.First<T>()` called on a List<Int> binds T
+            if (fn.Receiver is not null && o.ExtensionTarget is { } extensionTarget) Unify(extensionTarget, fn.Receiver, generics, bound);
+
             if (ParametersMatch(SubstParams(o.Parameters, fn.Substitute), argTypes, generics, bound)) matches.Add((o, bound));
         }
 
@@ -1143,12 +1146,14 @@ public class BodyResolver : AeroThrower
     private static ValueList<ParamSymbol> SubstParams(ValueList<ParamSymbol> parameters, Dictionary<string, AeroType>? map)
         => map is null || map.Count == 0 ? parameters : parameters.Select(p => p with { Type = Subst(p.Type, map) }).ToValueList();
 
-    private static bool TargetMatches(AeroType target, AeroType receiver) => (target, receiver) switch
+    // `generics` are the generic parameters of the extension itself, they match any type (`fun List<T>.First<T>()`)
+    private static bool TargetMatches(AeroType target, AeroType receiver, ICollection<string>? generics = null) => (target, receiver) switch
     {
+        (ScalarType t, _) when generics is not null && generics.Contains(t.Name) => true,
         (GenericType t, GenericType r) => t.Definition.Name == r.Definition.Name
             && t.TypeArguments.Count == r.TypeArguments.Count
-            && t.TypeArguments.Zip(r.TypeArguments).All(p => p.First.Name == p.Second.Name || p.Second.Name == AeroType.Auto.Name),
-        (ArrayType t, ArrayType r) => TargetMatches(t.ElementType, r.ElementType),
+            && t.TypeArguments.Zip(r.TypeArguments).All(p => p.First.Name == p.Second.Name || p.Second.Name == AeroType.Auto.Name || generics?.Contains(p.First.Name) == true),
+        (ArrayType t, ArrayType r) => TargetMatches(t.ElementType, r.ElementType, generics),
         (ScalarType t, ScalarType r) => t.Name == r.Name,
         _ => false
     };
@@ -1162,7 +1167,7 @@ public class BodyResolver : AeroThrower
         {
             foreach (var (key, list) in s.ExtensionFunctions)
                 if (key.Split('.')[^1] == name)
-                    result.AddRange(list.Where(f => f.ExtensionTarget is not null && TargetMatches(f.ExtensionTarget, receiver)));
+                    result.AddRange(list.Where(f => f.ExtensionTarget is not null && TargetMatches(f.ExtensionTarget, receiver, f.GenericParameters.Select(g => g.Name).ToHashSet())));
         }
 
         for (var s = scope; s is not null; s = s.ContainingScope) Collect(s);
@@ -1591,7 +1596,7 @@ public class BodyResolver : AeroThrower
                         return new ValueRes(extensionProperty.Type, new PropertyBinding(extensionProperty));
 
                     var extensions = FindExtensions(v.Type, name, scope, file);
-                    if (extensions.Count > 0) return new FunctionsRes(extensions);
+                    if (extensions.Count > 0) return new FunctionsRes(extensions, null, v.Type);
                 }
                 if (symbol is null)
                 {
@@ -1784,7 +1789,7 @@ public class BodyResolver : AeroThrower
     private sealed record ValueRes(AeroType Type, Binding? Ref = null) : Resolved;
     private sealed record TypeRes(TypeSymbol Symbol) : Resolved;
     private sealed record ModuleRes(string Path) : Resolved;
-    private sealed record FunctionsRes(List<FunctionSymbol> Overloads, Dictionary<string, AeroType>? Substitute = null) : Resolved;
+    private sealed record FunctionsRes(List<FunctionSymbol> Overloads, Dictionary<string, AeroType>? Substitute = null, AeroType? Receiver = null) : Resolved;
     private sealed record ErrorRes : Resolved; // error already reported, stay silent
     private static readonly ErrorRes Failed = new();
 

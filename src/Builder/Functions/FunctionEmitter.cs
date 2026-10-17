@@ -73,15 +73,16 @@ public sealed partial class FunctionEmitter : AeroThrower, IDisposable
     }
 
     public void Emit(FunctionSymbol symbol, DeclaredFunction declared)
-        => WithInstance(declared.Owner, null, null, () => EmitBody(declared, symbol.Declaration.Parameters, symbol.Body, Subst(symbol.ReturnType)));
+        => WithInstance(declared.Owner, null, null, () => EmitBody(declared, symbol.Declaration.Parameters, symbol.Body, Subst(symbol.ReturnType)), declared.Scope);
 
     public void EmitInstance(FunctionSymbol symbol, DeclaredFunction declared, IReadOnlyDictionary<string, AeroType> arguments, IReadOnlyDictionary<string, TypeSymbol> pins)
         => WithInstance(declared.Owner, arguments, pins, () => EmitBody(declared, symbol.Declaration.Parameters, symbol.Body, Subst(symbol.ReturnType)));
 
     // Runs `body` with the generic names of an instance replaced: the type arguments of the instance owning the member plus those of a generic function
-    private void WithInstance(TypeSymbol? owner, IReadOnlyDictionary<string, AeroType>? arguments, IReadOnlyDictionary<string, TypeSymbol>? pins, Action body)
+    // `scope` finds the instance for members without an owner symbol, the default methods of a generic trait's instance
+    private void WithInstance(TypeSymbol? owner, IReadOnlyDictionary<string, AeroType>? arguments, IReadOnlyDictionary<string, TypeSymbol>? pins, Action body, TypeScope? scope = null)
     {
-        var info = _types.InfoOf(owner);
+        var info = _types.InfoOf(owner) ?? (scope is null ? null : _types.InfoFor(scope));
         var merged = TypeSubstitution.Merge(info?.Arguments, arguments);
         var mergedPins = TypeSubstitution.Merge(info?.Pins, pins);
         if (merged is null && mergedPins is null)

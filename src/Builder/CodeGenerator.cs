@@ -1,6 +1,5 @@
 using LLVMSharp.Interop;
 using Luft.Ast;
-using Luft.Ast.Nodes;
 using Luft.TypeChecker;
 using Luft.TypeChecker.Symbols;
 using Luft.Utility;
@@ -11,8 +10,8 @@ public sealed class CodeGenerator : AeroThrower, IDisposable
 {
     protected override CompilerStage Stage => CompilerStage.CodeGen;
 
-    private readonly LLVMContextRef _context;
-    private readonly LLVMBuilderRef _builder;
+    private LLVMContextRef _context;
+    private LLVMBuilderRef _builder;
     private readonly TypeTable _table;
     private readonly Dictionary<FunctionSymbol, DeclaredFunction> _functions = new();
     private readonly Dictionary<ConstructorKey, DeclaredFunction> _constructors = new();
@@ -182,7 +181,7 @@ public sealed class CodeGenerator : AeroThrower, IDisposable
         }
         if (type is null) return null;
 
-        if (template.HasSelf) type = LLVMTypeRef.CreateFunction(type.Value.ReturnType, new[] { _types.Ptr }.Concat(type.Value.ParamTypes).ToArray(), false);
+        if (template.HasSelf) type = LLVMTypeRef.CreateFunction(type.Value.ReturnType, new[] { _types.Ptr }.Concat(type.Value.GetParamTypes()).ToArray());
 
         var name = $"{InternalName(function, template.Path)}<{key}>";
         var value = Module.AddFunction(name, type.Value);
@@ -337,7 +336,7 @@ public sealed class CodeGenerator : AeroThrower, IDisposable
             if (type is null) continue;
 
             // self comes first and is always a pointer, to the object for classes and to the value for structs
-            if (hasSelf) type = LLVMTypeRef.CreateFunction(type.Value.ReturnType, new[] { _types.Ptr }.Concat(type.Value.ParamTypes).ToArray(), false);
+            if (hasSelf) type = LLVMTypeRef.CreateFunction(type.Value.ReturnType, new[] { _types.Ptr }.Concat(type.Value.GetParamTypes()).ToArray());
 
             var external = f.Access == AccessMod.Public && exported;
             var name = external ? ExportName(f, scope, path) : InternalName(f, path);
@@ -431,7 +430,7 @@ public sealed class CodeGenerator : AeroThrower, IDisposable
             var type = _types.LowerFunction(f.ReturnType, f.Parameters.Select(p => p.Type), trait.Scope, f.Span);
             if (type is null) continue;
 
-            type = LLVMTypeRef.CreateFunction(type.Value.ReturnType, new[] { _types.Ptr }.Concat(type.Value.ParamTypes).ToArray(), false);
+            type = LLVMTypeRef.CreateFunction(type.Value.ReturnType, new[] { _types.Ptr }.Concat(type.Value.GetParamTypes()).ToArray());
 
             var external = f.Access == AccessMod.Public && exported;
             var name = external ? ExportName(f, trait.Scope, path) : InternalName(f, path);
@@ -484,7 +483,7 @@ public sealed class CodeGenerator : AeroThrower, IDisposable
                 if (_types.SymbolOf(listed, trait.Scope) is TraitSymbol baseTrait && baseTrait.GenericParameters.Count == 0) Add(baseTrait);
         }
 
-        for (var link = type; link is not null && !result.Contains(link as TraitSymbol!); link = _types.BaseOf(link))
+        for (var link = type; link is not null && !result.Contains((link as TraitSymbol)!); link = _types.BaseOf(link))
             foreach (var listed in ListedTypesOf(link))
                 if (_types.SymbolOf(TypeSubstitution.Apply(listed, _types.InfoOf(link)?.Arguments), link.Scope) is TraitSymbol trait && trait.GenericParameters.Count == 0) Add(trait);
 
@@ -561,7 +560,7 @@ public sealed class CodeGenerator : AeroThrower, IDisposable
     }
 
     // The slot of a default method receives the data pointer, so the thunk wraps it into the trait value the default body expects
-    private LLVMValueRef DefaultThunk(TypeSymbol type, TraitSymbol trait, DeclaredFunction fallback, LLVMValueRef table, string path, ModuleSymbol module)
+    private LLVMValueRef DefaultThunk(TypeSymbol _, TraitSymbol trait, DeclaredFunction fallback, LLVMValueRef table, string path, ModuleSymbol module)
     {
         var original = fallback.Type;
         var thunk = Module.AddFunction($"{QualifiedName(module, path)}.<default:{trait.Name}.{fallback.Value.Name}>", original);
@@ -597,7 +596,7 @@ public sealed class CodeGenerator : AeroThrower, IDisposable
             var type = _types.LowerFunction(o.ReturnType, o.Parameters.Select(p => p.Type), scope, o.Span);
             if (type is null) continue;
 
-            if (!o.IsStatic) type = LLVMTypeRef.CreateFunction(type.Value.ReturnType, new[] { _types.Ptr }.Concat(type.Value.ParamTypes).ToArray(), false);
+            if (!o.IsStatic) type = LLVMTypeRef.CreateFunction(type.Value.ReturnType, new[] { _types.Ptr }.Concat(type.Value.GetParamTypes()).ToArray());
 
             var external = o.Access == AccessMod.Public && exported;
             var suffix = string.Join("_", o.Parameters.Select(p => Sanitize(p.Type.ToString()!)));
@@ -689,7 +688,7 @@ public sealed class CodeGenerator : AeroThrower, IDisposable
         if (type is null) return;
 
         // self comes first, as for every method
-        if (hasSelf) type = LLVMTypeRef.CreateFunction(type.Value.ReturnType, new[] { _types.Ptr }.Concat(type.Value.ParamTypes).ToArray(), false);
+        if (hasSelf) type = LLVMTypeRef.CreateFunction(type.Value.ReturnType, new[] { _types.Ptr }.Concat(type.Value.GetParamTypes()).ToArray());
 
         var memberName = receiver is null ? p.Name : $"{Sanitize(receiver.ToString()!)}_{p.Name.Split('.')[^1]}";
         var name = GlobalName($"{(isSetter ? "set" : "get")}_{memberName}", path, external);
@@ -738,7 +737,7 @@ public sealed class CodeGenerator : AeroThrower, IDisposable
             var lowered = _types.LowerFunction(AeroType.Void, parameters.Select(p => p.Type), type.Scope, type.Span);
             if (lowered is null) continue;
 
-            var functionType = LLVMTypeRef.CreateFunction(lowered.Value.ReturnType, new[] { _types.Ptr }.Concat(lowered.Value.ParamTypes).ToArray(), false);
+            var functionType = LLVMTypeRef.CreateFunction(lowered.Value.ReturnType, new[] { _types.Ptr }.Concat(lowered.Value.GetParamTypes()).ToArray());
 
             var external = exported && (key.Symbol is null || key.Symbol.Access == AccessMod.Public);
             var suffix = string.Join("_", parameters.Select(p => Sanitize(p.Type.ToString()!)));
@@ -784,7 +783,7 @@ public sealed class CodeGenerator : AeroThrower, IDisposable
             var type = _types.LowerFunction(f.ReturnType, f.Parameters.Select(p => p.Type), scope, f.Span);
             if (type is null) continue;
 
-            type = LLVMTypeRef.CreateFunction(type.Value.ReturnType, new[] { _types.Ptr }.Concat(type.Value.ParamTypes).ToArray(), false);
+            type = LLVMTypeRef.CreateFunction(type.Value.ReturnType, new[] { _types.Ptr }.Concat(type.Value.GetParamTypes()).ToArray());
 
             var external = f.Access == AccessMod.Public && exported;
             var name = external ? ExportExtensionName(f, target, scope) : InternalName(f, "");
@@ -874,7 +873,7 @@ public sealed class CodeGenerator : AeroThrower, IDisposable
 
         // Statics are ready before any user code runs
         if (_staticInit.Handle != IntPtr.Zero)
-            _builder.BuildCall2(LLVMTypeRef.CreateFunction(_context.VoidType, [], false), _staticInit, [], "");
+            _builder.BuildCall2(LLVMTypeRef.CreateFunction(_context.VoidType, [], false), _staticInit, []);
 
         var exitCode = LLVMValueRef.CreateConstInt(_context.Int32Type, 0);
         if (main0 is not null)

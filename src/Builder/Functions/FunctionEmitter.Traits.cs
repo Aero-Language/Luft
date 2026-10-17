@@ -1,6 +1,5 @@
 using LLVMSharp.Interop;
 using Luft.Ast.Nodes;
-using Luft.TypeChecker;
 using Luft.TypeChecker.Symbols;
 using Luft.Utility;
 
@@ -78,7 +77,7 @@ public sealed partial class FunctionEmitter
 
         var lowered = _types.LowerFunction(function.ReturnType, function.Parameters.Select(p => p.Type), trait.Scope, call.Span);
         if (lowered is null) return false;
-        var type = LLVMTypeRef.CreateFunction(lowered.Value.ReturnType, new[] { _types.Ptr }.Concat(lowered.Value.ParamTypes).ToArray(), false);
+        var type = LLVMTypeRef.CreateFunction(lowered.Value.ReturnType, new[] { _types.Ptr }.Concat(lowered.Value.GetParamTypes()).ToArray(), false);
 
         var arguments = new List<LLVMValueRef> { data };
         for (var i = 0; i < function.Parameters.Count; i++)

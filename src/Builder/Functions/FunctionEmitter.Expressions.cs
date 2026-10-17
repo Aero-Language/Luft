@@ -367,7 +367,7 @@ public sealed partial class FunctionEmitter
         if (existing.Handle != IntPtr.Zero) return existing;
 
         var original = declared.Type;
-        var originalParameters = original.ParamTypes;
+        var originalParameters = original.GetParamTypes();
         var thunkType = LLVMTypeRef.CreateFunction(original.ReturnType, new[] { _types.Ptr }.Concat(originalParameters).ToArray(), false);
 
         var thunk = _module.AddFunction(name, thunkType);

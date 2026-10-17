@@ -215,7 +215,7 @@ public sealed partial class FunctionEmitter
         if (type.Scope.Destructor is { Body: { } body }) LowerStatements(body.Statements);
 
         if (!IsTerminated() && _types.BaseOf(type) is { } baseType && _members.Destroyers.TryGetValue(baseType, out var baseDestroy))
-            _builder.BuildCall2(baseDestroy.Type, baseDestroy.Value, [_self], "");
+            _builder.BuildCall2(baseDestroy.Type, baseDestroy.Value, [_self]);
 
         if (!IsTerminated()) _builder.BuildRetVoid();
     }

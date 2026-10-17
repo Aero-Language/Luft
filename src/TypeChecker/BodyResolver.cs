@@ -106,13 +106,28 @@ public class BodyResolver : AeroThrower
         if (type is not (ClassSymbol or StructSymbol or RecordSymbol)) return;
 
         var baseType = BaseTypeOf(type);
-        (AstNode declaration, ValueList<ExpressionNode>? primaryArguments) = type switch
+        
+        AstNode declaration;
+        ValueList<ExpressionNode>? primaryArguments;
+        switch (type)
         {
-            ClassSymbol c => (c.Node, c.Node.BaseArguments),
-            StructSymbol s => (s.Node, s.Node.BaseArguments),
-            RecordSymbol r => (r.Node, r.Node.BaseArguments),
-            _ => (null!, null)
-        };
+            case ClassSymbol c:
+                declaration = c.Node;
+                primaryArguments = c.Node.BaseArguments;
+                break;
+            case StructSymbol s:
+                declaration = s.Node;
+                primaryArguments = s.Node.BaseArguments;
+                break;
+            case RecordSymbol r:
+                declaration = r.Node;
+                primaryArguments = r.Node.BaseArguments;
+                break;
+            default:
+                declaration = null!;
+                primaryArguments = null;
+                break;
+        }
 
         if (primaryArguments is not null)
         {

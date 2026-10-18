@@ -66,6 +66,21 @@ public class PrettyPrinter(int indentAmount = 4, bool isLib = false) : PrinterBa
 
         return text;
     }
+    protected override string VisitOperator(OperatorDeclarationNode node)
+    {
+        var text = $"{string.Join("", node.Annotations.Select(Visit))}{(node.Annotations.Any() ? Indent() : "")}{node.AccessMod.AsString()} ";
+        var memberMods = node.MemberMods.AsString();
+        if (memberMods is not null) text += $"{memberMods} ";
+        if (node.InheritanceMod is not InheritanceMod.None) text += $"{node.InheritanceMod.AsString()} ";
+
+        // The symbol itself names the operator
+        text += $"op fun {node.Name}({string.Join(", ", node.Parameters.Select(Visit))})";
+        if (node.ReturnType != AeroType.Auto) text += $" -> {node.ReturnType}";
+
+        if (node.Body is not null) text += $" {Visit(node.Body)}";
+
+        return text;
+    }
     protected override string VisitExtension(ExtensionDeclarationNode ext)
     {
         if (ext.Extension is FunctionDeclarationNode fun) return Visit(fun);

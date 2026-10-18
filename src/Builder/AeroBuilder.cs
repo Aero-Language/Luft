@@ -28,6 +28,20 @@ public class AeroBuilder : AeroThrower
     /// <returns>The absolute path of the final executable or null if something failed</returns>
     public string? Build(string[] projectFiles, string[] libFiles, AeroBuilderSettings? settings = null)
     {
+        // The binaries of library packages are unpacked here while the build runs
+        var work = Path.Combine(Path.GetTempPath(), "aeroin-" + Guid.NewGuid().ToString("N"));
+
+        try { return BuildCore(projectFiles, libFiles, settings, work); }
+        finally
+        {
+            try { if (Directory.Exists(work)) Directory.Delete(work, true); }
+            catch (IOException) { }
+            catch (UnauthorizedAccessException) { }
+        }
+    }
+
+    private string? BuildCore(string[] projectFiles, string[] libFiles, AeroBuilderSettings? settings, string work)
+    {
         Diagnostics ??= new DiagnosticBag();
         settings ??= AeroBuilderSettings.Default;
 
@@ -39,6 +53,7 @@ public class AeroBuilder : AeroThrower
         
         List<FileNode> files = [];
         List<ModuleDeclarationNode> libs = [];
+        List<LoadedLibrary> loaded = [];
         foreach (var file in projectFiles)
         {
             if (!File.Exists(file))
@@ -55,8 +70,16 @@ public class AeroBuilder : AeroThrower
 
             files.Add(ast);
         }
+        var reader = new LibraryReader(work) { Diagnostics = this.Diagnostics };
         foreach (var file in libFiles)
         {
+            // A package, as opposed to a plain source file that is merged into the project
+            if (file.EndsWith(".aerolib", StringComparison.OrdinalIgnoreCase))
+            {
+                if (reader.Read(file) is { } package) loaded.Add(package);
+                continue;
+            }
+
             if (!File.Exists(file))
             {
                 Error("Library not found.", SourceSpan.Unknown);
@@ -74,12 +97,29 @@ public class AeroBuilder : AeroThrower
         }
 
         if (Diagnostics.HasErrors) return null;
-        
+
+        var packages = reader.Order(loaded);
+        if (packages is null) return null;
+
+        // The headers stand in for the library's source, they are checked next to the project's own files
+        List<(string Id, FileNode File)> headerFiles = [];
+        foreach (var package in packages)
+        {
+            foreach (var (name, text) in package.Headers)
+            {
+                var tk = new Tokenizer { Diagnostics = this.Diagnostics };
+                var ab = new AstBuilder { Diagnostics = this.Diagnostics };
+
+                headerFiles.Add((package.Id, ab.BuildAst(tk.TokenizeSource(text, $"{package.Id}/{name}"))));
+            }
+        }
+        if (Diagnostics.HasErrors) return null;
+
         var lookup = new TypeLookup { Diagnostics = this.Diagnostics };
         var typeResolver = new TypeResolver { Diagnostics = this.Diagnostics };
         var bodyResolver = new BodyResolver { Diagnostics = this.Diagnostics };
         
-        var table = lookup.Run(files.ToArray(), libs.ToArray());
+        var table = lookup.Run(files.ToArray(), libs.ToArray(), headerFiles);
         typeResolver.Run(table);
         bodyResolver.Run(table);
 
@@ -90,8 +130,8 @@ public class AeroBuilder : AeroThrower
         Directory.CreateDirectory(Path.GetDirectoryName(outputPath)!);
 
         return settings.isExecutable 
-            ? BuildExecutable(table, files, libs, settings, outputPath) 
-            : BuildLibrary(table, files, libs, settings, outputPath);
+            ? BuildExecutable(table, files, libs, packages, settings, outputPath) 
+            : BuildLibrary(table, files, libs, packages, settings, outputPath);
     }
 
     private static string DefaultOutputPath(string firstFile, bool isExecutable)
@@ -105,14 +145,17 @@ public class AeroBuilder : AeroThrower
         return Path.Combine(dir, name + extension);
     }
 
-    private string? BuildExecutable(TypeTable table, List<FileNode> files, List<ModuleDeclarationNode> libs, AeroBuilderSettings settings, string outputPath)
-        => EmitAndLink(table, settings, outputPath, false);
+    private string? BuildExecutable(TypeTable table, List<FileNode> files, List<ModuleDeclarationNode> libs, List<LoadedLibrary> packages, AeroBuilderSettings settings, string outputPath)
+        => EmitAndLink(table, settings, outputPath, false, packages);
 
     // A `#lib` package: the shared library (no entry point, every public symbol exported, the init function and the C runtime inside),
     // the headers printed from the checked sources, and the manifest
-    private string? BuildLibrary(TypeTable table, List<FileNode> files, List<ModuleDeclarationNode> libs, AeroBuilderSettings settings, string outputPath)
+    private string? BuildLibrary(TypeTable table, List<FileNode> files, List<ModuleDeclarationNode> libs, List<LoadedLibrary> packages, AeroBuilderSettings settings, string outputPath)
     {
         var package = settings.Package ?? new PackageMetadata("@local/" + new string(Path.GetFileNameWithoutExtension(outputPath).ToLowerInvariant().Select(c => char.IsLetterOrDigit(c) ? c : '_').ToArray()));
+        // The libraries this one was built against are listed as its dependencies unless the settings say otherwise
+        if (package.Dependencies is null && packages.Count > 0)
+            package = package with { Dependencies = packages.Select(p => new PackageDependency(p.Id, "^" + p.Version)).ToArray() };
         settings = settings with { Package = package };
 
         var work = Path.Combine(Path.GetTempPath(), "aerolib-" + Guid.NewGuid().ToString("N"));
@@ -121,7 +164,7 @@ public class AeroBuilder : AeroThrower
         try
         {
             var binary = Path.Combine(work, LibraryPackager.BinaryFileName(LibraryPackager.BinaryNameOf(package)));
-            if (EmitAndLink(table, settings, binary, true) is null) return null;
+            if (EmitAndLink(table, settings, binary, true, packages) is null) return null;
 
             // One header per source file, named after it
             var printer = new HeaderPrinter(table.Typed);
@@ -158,13 +201,14 @@ public class AeroBuilder : AeroThrower
         }
     }
 
-    private string? EmitAndLink(TypeTable table, AeroBuilderSettings settings, string outputPath, bool isLibrary)
+    private string? EmitAndLink(TypeTable table, AeroBuilderSettings settings, string outputPath, bool isLibrary, IReadOnlyList<LoadedLibrary> packages)
     {
         using var generator = new CodeGenerator(Path.GetFileNameWithoutExtension(outputPath), table)
         {
             Diagnostics = this.Diagnostics,
             IsLibrary = isLibrary,
-            LibraryId = settings.Package?.Id
+            LibraryId = settings.Package?.Id,
+            LibraryInits = packages.Select(p => CodeGenerator.InitNameOf(p.Id)).ToList()
         };
         if (!generator.Generate()) return null;
 
@@ -192,7 +236,21 @@ public class AeroBuilder : AeroThrower
             }
 
             // The runtime's symbols stay inside a library, so two libraries never clash
-            var flags = isLibrary ? new[] { "-fvisibility=hidden" } : Array.Empty<string>();
+            var flags = new List<string>();
+            if (isLibrary) flags.Add("-fvisibility=hidden");
+
+            // An executable finds the libraries it links next to itself
+            foreach (var package in packages)
+            {
+                var binary = package.BinaryPath;
+                if (!isLibrary)
+                {
+                    binary = Path.Combine(Path.GetDirectoryName(outputPath)!, Path.GetFileName(package.BinaryPath));
+                    File.Copy(package.BinaryPath, binary, true);
+                }
+                extra.Add(binary);
+            }
+            if (packages.Count > 0 && !OperatingSystem.IsWindows()) flags.Add(OperatingSystem.IsMacOS() ? "-Wl,-rpath,@loader_path" : "-Wl,-rpath,$ORIGIN");
             return linker.Link(objectPath, outputPath, isLibrary, settings.LinkerPath, extra, flags) ? outputPath : null;
         }
         finally

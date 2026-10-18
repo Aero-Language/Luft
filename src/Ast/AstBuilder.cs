@@ -604,8 +604,12 @@ public sealed class AstBuilder : SafeIterator<Token>
             baseArguments = PopBaseArguments();
         }
 
-        BlockExpressionNode body = PopBlock();
-        
+        // A header lists a constructor without its body
+        BlockExpressionNode? body = null;
+        if (Peek().Type is TokenType.BracketOpen or TokenType.EqualArrow) body = PopBlock();
+        else if (IsStatementTerminator()) PopStatementTerminator();
+        else body = PopBlock();
+
         return new ConstructorDeclarationNode(annotations.OrNew(), access, name, parameters, body, startSpan.To(Peek().Span.End)) { BaseArguments = baseArguments };
     }
     DestructorDeclarationNode PopDestructor(ValueList<AnnotationStatementNode>? annotations)

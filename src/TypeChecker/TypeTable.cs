@@ -24,10 +24,10 @@ public sealed class TypeTable
     // Filled by BodyResolver
     public TypedInfo Typed { get; } = new();
 
-    public ModuleSymbol GetOrAddModule(string modulePath, SourceSpan span)
+    public ModuleSymbol GetOrAddModule(string modulePath, SourceSpan span, string? libraryId = null)
     {
         if (!Modules.TryGetValue(modulePath, out var module))
-            Modules[modulePath] = module = new ModuleSymbol(modulePath, span) { Scope = new TypeScope(null) };
+            Modules[modulePath] = module = new ModuleSymbol(modulePath, span) { Scope = new TypeScope(null), LibraryId = libraryId };
         return module;
     }
 }

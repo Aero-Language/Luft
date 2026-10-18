@@ -42,6 +42,9 @@ public sealed class CodeGenerator : AeroThrower, IDisposable
     // A library has no entry point, it exports an init function named after its package id instead
     public bool IsLibrary { get; init; }
     public string? LibraryId { get; init; }
+
+    // The init functions of the libraries this module links, dependencies first; they run before any code of this module
+    public IReadOnlyList<string> LibraryInits { get; init; } = [];
     private readonly string _moduleName;
 
     // True when the module calls into the C runtime, which then has to be linked in
@@ -71,7 +74,7 @@ public sealed class CodeGenerator : AeroThrower, IDisposable
         // Created here because Diagnostics is assigned after construction
         _types = new TypeLowering(_context, _table) { Diagnostics = Diagnostics, OnDiagnostic = OnDiagnostic, OnError = OnError, OnInstance = DeclareInstance };
 
-        foreach (var module in _table.Modules.Values) LowerScope(module.Scope);
+        foreach (var module in _table.Modules.Values) LowerScope(module.Scope, module.IsLibrary);
         if (_types.HasErrors) return false;
 
         DeclareFunctions();
@@ -115,7 +118,8 @@ public sealed class CodeGenerator : AeroThrower, IDisposable
     };
 
     // Lowers every non generic declaration once, so type problems show up before function bodies exist
-    private void LowerScope(TypeScope scope)
+    // The types of a library module are lowered once their opaque form exists, only its functions are checked here
+    private void LowerScope(TypeScope scope, bool library = false)
     {
         // Generic declarations are lowered per instantiation, extension functions with sub-task 7
         if (!scope.AllGenerics().Any())
@@ -129,6 +133,8 @@ public sealed class CodeGenerator : AeroThrower, IDisposable
             foreach (var c in scope.Constructors)
                 _types.LowerFunction(AeroType.Void, c.Parameters.Select(p => p.Type), scope, c.Span);
         }
+
+        if (library) return;
 
         foreach (var symbol in scope.Types.Values.SelectMany(l => l))
         {
@@ -350,7 +356,8 @@ public sealed class CodeGenerator : AeroThrower, IDisposable
             var hasSelf = owner is not null && !f.MemberMods.HasFlag(MemberMod.Static);
             if (f.GenericParameters.Count > 0)
             {
-                _templates[f] = new GenericTemplate(scope, owner, path, hasSelf);
+                // A header has no body to instantiate from
+                if (_declaringModule is not { IsLibrary: true }) _templates[f] = new GenericTemplate(scope, owner, path, hasSelf);
                 continue;
             }
 
@@ -381,6 +388,9 @@ public sealed class CodeGenerator : AeroThrower, IDisposable
         DeclareFields(scope, owner, path, exported, symbols);
         DeclareProperties(scope, owner, path, exported, symbols);
         if (owner is not null) DeclareOperators(scope, owner, path, exported, symbols);
+
+        // The types of a library are opaque, they are declared with the library support for classes, structs and records
+        if (_declaringModule is { IsLibrary: true }) return;
 
         foreach (var symbol in scope.Types.Values.SelectMany(l => l))
         {
@@ -674,7 +684,8 @@ public sealed class CodeGenerator : AeroThrower, IDisposable
                 continue;
             }
 
-            var variable = AddGlobal(name, lowered, type, external);
+            // A library's field is defined in the library, here it is only named
+            var variable = AddGlobal(name, lowered, type, external, _declaringModule is { IsLibrary: true });
             _members.Fields[field] = variable;
 
             if (field.Initializer is not null) _members.Initializers.Add(new StaticInitializer(variable, field.Initializer, scope, field.Span, owner));
@@ -752,10 +763,10 @@ public sealed class CodeGenerator : AeroThrower, IDisposable
     }
 
     // Zero until the startup initializer stores the real value
-    private GlobalVariable AddGlobal(string name, LLVMTypeRef type, AeroType aeroType, bool external)
+    private GlobalVariable AddGlobal(string name, LLVMTypeRef type, AeroType aeroType, bool external, bool declarationOnly = false)
     {
         var global = Module.AddGlobal(type, name);
-        global.Initializer = LLVMValueRef.CreateConstNull(type);
+        if (!declarationOnly) global.Initializer = LLVMValueRef.CreateConstNull(type);
         if (!external) global.Linkage = LLVMLinkage.LLVMInternalLinkage;
         return new GlobalVariable(global, type, aeroType);
     }
@@ -819,7 +830,7 @@ public sealed class CodeGenerator : AeroThrower, IDisposable
             // A generic extension, or one whose target names its generics, is instantiated per call like a generic function
             if (f.GenericParameters.Count > 0 || ContainsGeneric(target, scope, f.GenericParameters))
             {
-                _templates[f] = new GenericTemplate(scope, null, "", true, target);
+                if (_declaringModule is not { IsLibrary: true }) _templates[f] = new GenericTemplate(scope, null, "", true, target);
                 continue;
             }
 
@@ -898,10 +909,25 @@ public sealed class CodeGenerator : AeroThrower, IDisposable
         return $"{prefix}{f.Name}({string.Join(",", f.Parameters.Select(p => p.Type))})";
     }
 
+    // `@scope/name` becomes `_scope_name_aero_init`
+    public static string InitNameOf(string packageId) => $"{Sanitize(packageId)}_aero_init";
+
+    // Every linked library sets up its own statics, they are safe to call more than once
+    private void CallLibraryInits()
+    {
+        var type = LLVMTypeRef.CreateFunction(_context.VoidType, [], false);
+        foreach (var name in LibraryInits)
+        {
+            var function = Module.GetNamedFunction(name);
+            if (function.Handle == IntPtr.Zero) function = Module.AddFunction(name, type);
+            _builder.BuildCall2(type, function, []);
+        }
+    }
+
     // `<package id>_aero_init` runs the static initializers once, calling it again does nothing
     private bool EmitLibraryInit()
     {
-        var name = $"{Sanitize(LibraryId ?? _moduleName)}_aero_init";
+        var name = InitNameOf(LibraryId ?? _moduleName);
         if (!_symbols.Add(name))
         {
             Error($"The symbol '{name}' is defined more than once.", SourceSpan.Unknown);
@@ -924,6 +950,7 @@ public sealed class CodeGenerator : AeroThrower, IDisposable
 
         _builder.PositionAtEnd(run);
         _builder.BuildStore(LLVMValueRef.CreateConstInt(_context.Int8Type, 1), done);
+        CallLibraryInits();
         if (_staticInit.Handle != IntPtr.Zero)
             _builder.BuildCall2(LLVMTypeRef.CreateFunction(_context.VoidType, [], false), _staticInit, []);
         _builder.BuildBr(exit);
@@ -958,7 +985,8 @@ public sealed class CodeGenerator : AeroThrower, IDisposable
 
         _builder.PositionAtEnd(_context.AppendBasicBlock(main, "entry"));
 
-        // Statics are ready before any user code runs
+        // Statics are ready before any user code runs, the libraries' first
+        CallLibraryInits();
         if (_staticInit.Handle != IntPtr.Zero)
             _builder.BuildCall2(LLVMTypeRef.CreateFunction(_context.VoidType, [], false), _staticInit, []);
 

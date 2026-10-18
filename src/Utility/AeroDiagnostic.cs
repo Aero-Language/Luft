@@ -22,7 +22,8 @@ public enum CompilerStage
     TypeResolver,
     BodyResolver,
     CodeGen,
-    Linker
+    Linker,
+    Package
 }
 
 /// <summary>

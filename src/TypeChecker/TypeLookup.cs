@@ -15,7 +15,10 @@ public class TypeLookup : AstVisitor
 
     #region Special
     
-    public TypeTable Run(FileNode[] ownFiles, ModuleDeclarationNode[] libModules)
+    public TypeTable Run(FileNode[] ownFiles, ModuleDeclarationNode[] libModules) => Run(ownFiles, libModules, []);
+
+    // `libraryFiles` are the parsed headers of library packages, their modules belong to the package they came from
+    public TypeTable Run(FileNode[] ownFiles, ModuleDeclarationNode[] libModules, IReadOnlyList<(string Id, FileNode File)> libraryFiles)
     {
         Table = new();
         
@@ -28,12 +31,29 @@ public class TypeLookup : AstVisitor
         }
         
         foreach (var module in libModules) Visit(module);
-        
+
+        foreach (var (id, file) in libraryFiles)
+        {
+            if (Table.ImportsByFile.TryGetValue(file.Span.FilePath, out var list)) list.AddRange(file.Imports);
+            else Table.ImportsByFile.Add(file.Span.FilePath, file.Imports.ToList());
+
+            _libraryId = id;
+            foreach (var module in file.Modules) Visit(module);
+        }
+        _libraryId = null;
+
         return Table;
     }
+    private string? _libraryId;
+
     protected override void VisitModule(ModuleDeclarationNode node)
     {
-        CurrentModule = Table.GetOrAddModule(node.ModulePath, node.Span);
+        CurrentModule = Table.GetOrAddModule(node.ModulePath, node.Span, _libraryId);
+        if (CurrentModule.LibraryId != _libraryId)
+        {
+            // Two packages, or a package and the project, cannot share a module: the linker would see equal symbols twice
+            Error($"The module '{node.ModulePath}' is declared by {Describe(CurrentModule.LibraryId)} and by {Describe(_libraryId)}.", node.Span);
+        }
         CurrentScope = CurrentModule.Scope;
         
         foreach (var decl in node.Declarations)
@@ -54,6 +74,7 @@ public class TypeLookup : AstVisitor
             dict.Add(key, [symbol]);
         }
     }
+    private static string Describe(string? libraryId) => libraryId is null ? "the project" : $"the library '{libraryId}'";
     private void AddType(string name, TypeSymbol symbol) => AddOverloadable(CurrentScope.Types, name, symbol);
     private void AddDecl(TypeSymbol symbol, DeclarationNode node)
     {

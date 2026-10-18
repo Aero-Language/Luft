@@ -1,6 +1,7 @@
 ﻿using Luft.Ast;
 using Luft.Ast.Nodes;
 using Luft.Lexer;
+using Luft.Printers;
 using Luft.TypeChecker;
 using Luft.Utility;
 
@@ -9,8 +10,8 @@ namespace Luft.Builder;
 /// <param name="SingleOutput">Merge libraries into one output file instead of one dll per library</param>
 /// <param name="OutputPath">Where the final file goes, defaults to the first project file's folder and name</param>
 /// <param name="LinkerPath">A clang compatible driver that links with lld, defaults to 'clang' on PATH</param>
-/// <param name="PackageId">The id of the library package, e.g. '@scope/name', names its init function</param>
-public record AeroBuilderSettings(bool isExecutable = false, bool SingleOutput = false, string? OutputPath = null, string? LinkerPath = null, string? PackageId = null)
+/// <param name="Package">Metadata of the library package, its id also names the init function; defaults to a local id</param>
+public record AeroBuilderSettings(bool isExecutable = false, bool SingleOutput = false, string? OutputPath = null, string? LinkerPath = null, PackageMetadata? Package = null)
 {
     public static readonly AeroBuilderSettings Default = new();
 }
@@ -98,9 +99,8 @@ public class AeroBuilder : AeroThrower
         var dir = Path.GetDirectoryName(Path.GetFullPath(firstFile))!;
         var name = Path.GetFileNameWithoutExtension(firstFile);
 
-        var extension = isExecutable
-            ? (OperatingSystem.IsWindows() ? ".exe" : "")
-            : OperatingSystem.IsWindows() ? ".dll" : OperatingSystem.IsMacOS() ? ".dylib" : ".so";
+        // A library is a package holding the shared library, the headers and a manifest
+        var extension = isExecutable ? (OperatingSystem.IsWindows() ? ".exe" : "") : ".aerolib";
 
         return Path.Combine(dir, name + extension);
     }
@@ -108,9 +108,55 @@ public class AeroBuilder : AeroThrower
     private string? BuildExecutable(TypeTable table, List<FileNode> files, List<ModuleDeclarationNode> libs, AeroBuilderSettings settings, string outputPath)
         => EmitAndLink(table, settings, outputPath, false);
 
-    // A shared library: no entry point, every public symbol exported, the init function and the C runtime inside
+    // A `#lib` package: the shared library (no entry point, every public symbol exported, the init function and the C runtime inside),
+    // the headers printed from the checked sources, and the manifest
     private string? BuildLibrary(TypeTable table, List<FileNode> files, List<ModuleDeclarationNode> libs, AeroBuilderSettings settings, string outputPath)
-        => EmitAndLink(table, settings, outputPath, true);
+    {
+        var package = settings.Package ?? new PackageMetadata("@local/" + new string(Path.GetFileNameWithoutExtension(outputPath).ToLowerInvariant().Select(c => char.IsLetterOrDigit(c) ? c : '_').ToArray()));
+        settings = settings with { Package = package };
+
+        var work = Path.Combine(Path.GetTempPath(), "aerolib-" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(work);
+
+        try
+        {
+            var binary = Path.Combine(work, LibraryPackager.BinaryFileName(LibraryPackager.BinaryNameOf(package)));
+            if (EmitAndLink(table, settings, binary, true) is null) return null;
+
+            // One header per source file, named after it
+            var printer = new HeaderPrinter(table.Typed);
+            var headers = new List<(string Name, string Text)>();
+            var used = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            foreach (var file in files)
+            {
+                var name = Path.GetFileNameWithoutExtension(file.Span.FilePath ?? "");
+                if (name.Length == 0) name = "header";
+                var unique = name;
+                for (var i = 2; !used.Add(unique); i++) unique = $"{name}{i}";
+
+                headers.Add(($"{unique}.aero", printer.PrintHeader(file)));
+            }
+
+            var modules = files.SelectMany(f => f.Modules).Select(m => m.ModulePath).Where(p => p.Length > 0).Distinct().ToList();
+
+            var readmePath = Path.Combine(Path.GetDirectoryName(Path.GetFullPath(files[0].Span.FilePath ?? outputPath))!, "README.md");
+            var readme = File.Exists(readmePath) ? File.ReadAllText(readmePath) : null;
+
+            var luftVersion = typeof(AeroBuilder).Assembly.GetName().Version?.ToString(3) ?? "0.0.0";
+            LibraryPackager.Write(outputPath, package, headers, modules, binary, readme, luftVersion);
+            return outputPath;
+        }
+        catch (Exception e) when (e is IOException or UnauthorizedAccessException)
+        {
+            Error($"Could not write the package: {e.Message}", SourceSpan.Unknown);
+            return null;
+        }
+        finally
+        {
+            try { Directory.Delete(work, true); }
+            catch (IOException) { }
+        }
+    }
 
     private string? EmitAndLink(TypeTable table, AeroBuilderSettings settings, string outputPath, bool isLibrary)
     {
@@ -118,7 +164,7 @@ public class AeroBuilder : AeroThrower
         {
             Diagnostics = this.Diagnostics,
             IsLibrary = isLibrary,
-            LibraryId = settings.PackageId
+            LibraryId = settings.Package?.Id
         };
         if (!generator.Generate()) return null;
 

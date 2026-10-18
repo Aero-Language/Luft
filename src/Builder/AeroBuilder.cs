@@ -9,7 +9,8 @@ namespace Luft.Builder;
 /// <param name="SingleOutput">Merge libraries into one output file instead of one dll per library</param>
 /// <param name="OutputPath">Where the final file goes, defaults to the first project file's folder and name</param>
 /// <param name="LinkerPath">A clang compatible driver that links with lld, defaults to 'clang' on PATH</param>
-public record AeroBuilderSettings(bool isExecutable = false, bool SingleOutput = false, string? OutputPath = null, string? LinkerPath = null)
+/// <param name="PackageId">The id of the library package, e.g. '@scope/name', names its init function</param>
+public record AeroBuilderSettings(bool isExecutable = false, bool SingleOutput = false, string? OutputPath = null, string? LinkerPath = null, string? PackageId = null)
 {
     public static readonly AeroBuilderSettings Default = new();
 }
@@ -105,8 +106,20 @@ public class AeroBuilder : AeroThrower
     }
 
     private string? BuildExecutable(TypeTable table, List<FileNode> files, List<ModuleDeclarationNode> libs, AeroBuilderSettings settings, string outputPath)
+        => EmitAndLink(table, settings, outputPath, false);
+
+    // A shared library: no entry point, every public symbol exported, the init function and the C runtime inside
+    private string? BuildLibrary(TypeTable table, List<FileNode> files, List<ModuleDeclarationNode> libs, AeroBuilderSettings settings, string outputPath)
+        => EmitAndLink(table, settings, outputPath, true);
+
+    private string? EmitAndLink(TypeTable table, AeroBuilderSettings settings, string outputPath, bool isLibrary)
     {
-        using var generator = new CodeGenerator(Path.GetFileNameWithoutExtension(outputPath), table) { Diagnostics = this.Diagnostics };
+        using var generator = new CodeGenerator(Path.GetFileNameWithoutExtension(outputPath), table)
+        {
+            Diagnostics = this.Diagnostics,
+            IsLibrary = isLibrary,
+            LibraryId = settings.PackageId
+        };
         if (!generator.Generate()) return null;
 
         var objectPath = outputPath + (OperatingSystem.IsWindows() ? ".obj" : ".o");
@@ -132,16 +145,13 @@ public class AeroBuilder : AeroThrower
                 extra.Add(runtime);
             }
 
-            return linker.Link(objectPath, outputPath, false, settings.LinkerPath, extra) ? outputPath : null;
+            // The runtime's symbols stay inside a library, so two libraries never clash
+            var flags = isLibrary ? new[] { "-fvisibility=hidden" } : Array.Empty<string>();
+            return linker.Link(objectPath, outputPath, isLibrary, settings.LinkerPath, extra, flags) ? outputPath : null;
         }
         finally
         {
             File.Delete(objectPath);
         }
-    }
-    
-    private string? BuildLibrary(TypeTable table, List<FileNode> files, List<ModuleDeclarationNode> libs, AeroBuilderSettings settings, string outputPath)
-    {
-        throw new NotImplementedException();
     }
 }

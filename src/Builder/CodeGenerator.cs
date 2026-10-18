@@ -39,6 +39,11 @@ public sealed class CodeGenerator : AeroThrower, IDisposable
     public LLVMModuleRef Module { get; }
     public TypeLowering Types => _types;
 
+    // A library has no entry point, it exports an init function named after its package id instead
+    public bool IsLibrary { get; init; }
+    public string? LibraryId { get; init; }
+    private readonly string _moduleName;
+
     // True when the module calls into the C runtime, which then has to be linked in
     public bool UsesRuntime
     {
@@ -55,6 +60,7 @@ public sealed class CodeGenerator : AeroThrower, IDisposable
         LlvmBackend.Initialize();
 
         _table = table;
+        _moduleName = moduleName;
         _context = LLVMContextRef.Create();
         Module = _context.CreateModuleWithName(moduleName);
         _builder = _context.CreateBuilder();
@@ -87,7 +93,7 @@ public sealed class CodeGenerator : AeroThrower, IDisposable
         }
         if (failed || _types.HasErrors) return false;
 
-        if (!EmitEntryPoint()) return false;
+        if (!(IsLibrary ? EmitLibraryInit() : EmitEntryPoint())) return false;
 
         if (!Module.TryVerify(LLVMVerifierFailureAction.LLVMReturnStatusAction, out var message))
         {
@@ -890,6 +896,41 @@ public sealed class CodeGenerator : AeroThrower, IDisposable
         var prefix = f.Module.ModulePath.Length == 0 ? "" : f.Module.ModulePath + ".";
         if (path.Length > 0) prefix += path + ".";
         return $"{prefix}{f.Name}({string.Join(",", f.Parameters.Select(p => p.Type))})";
+    }
+
+    // `<package id>_aero_init` runs the static initializers once, calling it again does nothing
+    private bool EmitLibraryInit()
+    {
+        var name = $"{Sanitize(LibraryId ?? _moduleName)}_aero_init";
+        if (!_symbols.Add(name))
+        {
+            Error($"The symbol '{name}' is defined more than once.", SourceSpan.Unknown);
+            return false;
+        }
+
+        var init = Module.AddFunction(name, LLVMTypeRef.CreateFunction(_context.VoidType, []));
+
+        var done = Module.AddGlobal(_context.Int8Type, "aero.initialized");
+        done.Initializer = LLVMValueRef.CreateConstInt(_context.Int8Type, 0);
+        done.Linkage = LLVMLinkage.LLVMInternalLinkage;
+
+        var entry = _context.AppendBasicBlock(init, "entry");
+        var run = _context.AppendBasicBlock(init, "run");
+        var exit = _context.AppendBasicBlock(init, "exit");
+
+        _builder.PositionAtEnd(entry);
+        var flag = _builder.BuildLoad2(_context.Int8Type, done, "done");
+        _builder.BuildCondBr(_builder.BuildICmp(LLVMIntPredicate.LLVMIntNE, flag, LLVMValueRef.CreateConstInt(_context.Int8Type, 0), "isdone"), exit, run);
+
+        _builder.PositionAtEnd(run);
+        _builder.BuildStore(LLVMValueRef.CreateConstInt(_context.Int8Type, 1), done);
+        if (_staticInit.Handle != IntPtr.Zero)
+            _builder.BuildCall2(LLVMTypeRef.CreateFunction(_context.VoidType, [], false), _staticInit, []);
+        _builder.BuildBr(exit);
+
+        _builder.PositionAtEnd(exit);
+        _builder.BuildRetVoid();
+        return true;
     }
 
     // The C main calls Aero's Main and passes its Int result on as the exit code

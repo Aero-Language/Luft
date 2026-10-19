@@ -7,11 +7,12 @@ using Luft.Utility;
 
 namespace Luft.Builder;
 
-/// <param name="SingleOutput">Merge libraries into one output file instead of one dll per library</param>
+/// <param name="SingleOutput">Library source files are compiled into the output; separate outputs per source library are not supported yet, so without this a warning says so. Library packages are always linked as the shared libraries they are.</param>
 /// <param name="OutputPath">Where the final file goes, defaults to the first project file's folder and name</param>
 /// <param name="LinkerPath">A clang compatible driver that links with lld, defaults to 'clang' on PATH</param>
 /// <param name="Package">Metadata of the library package, its id also names the init function; defaults to a local id</param>
-public record AeroBuilderSettings(bool isExecutable = false, bool SingleOutput = false, string? OutputPath = null, string? LinkerPath = null, PackageMetadata? Package = null)
+/// <param name="EmitIr">Also write the LLVM IR next to the output as `&lt;output&gt;.ll`</param>
+public record AeroBuilderSettings(bool isExecutable = false, bool SingleOutput = false, string? OutputPath = null, string? LinkerPath = null, PackageMetadata? Package = null, bool EmitIr = false)
 {
     public static readonly AeroBuilderSettings Default = new();
 }
@@ -70,6 +71,9 @@ public class AeroBuilder : AeroThrower
 
             files.Add(ast);
         }
+        if (!settings.SingleOutput && libFiles.Any(f => !f.EndsWith(".aerolib", StringComparison.OrdinalIgnoreCase)))
+            Warning("Libraries given as source files are compiled into the output, separate outputs are not supported yet. Pass --single to silence this.", SourceSpan.Unknown);
+
         var reader = new LibraryReader(work) { Diagnostics = this.Diagnostics };
         foreach (var file in libFiles)
         {
@@ -211,6 +215,12 @@ public class AeroBuilder : AeroThrower
             LibraryInits = packages.Select(p => CodeGenerator.InitNameOf(p.Id)).ToList()
         };
         if (!generator.Generate()) return null;
+
+        if (settings.EmitIr)
+        {
+            try { File.WriteAllText(outputPath + ".ll", generator.Module.PrintToString()); }
+            catch (IOException e) { Warning($"Could not write the IR: {e.Message}", SourceSpan.Unknown); }
+        }
 
         var objectPath = outputPath + (OperatingSystem.IsWindows() ? ".obj" : ".o");
         if (!LlvmBackend.TryEmitObject(generator.Module, LlvmBackend.HostTriple, objectPath, out var error))

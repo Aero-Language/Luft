@@ -21,6 +21,12 @@ public sealed partial class FunctionEmitter
         if (_types.DefinitionOfMember(op) is { } definition && FindInstance(definition, operand, TypeOf(operand)) is { } owner)
             op = _types.MapMember(owner, op);
 
+        return TryGetOperator(op, span, out declared);
+    }
+
+    // For an overload that is already the one of the right instance, as found on a type's own scope
+    private bool TryGetOperator(OperatorSymbol op, SourceSpan span, out DeclaredFunction declared)
+    {
         if (_members.Operators.TryGetValue(op, out var found))
         {
             declared = found;

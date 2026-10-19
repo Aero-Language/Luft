@@ -26,6 +26,18 @@ public sealed class MemberTable
 
     public Dictionary<AccessorKey, DeclaredFunction> Accessors { get; } = new();
 
+    // Properties declared by a library: their accessors are only declared here and called, the library holds the storage
+    public HashSet<PropertySymbol> ExternalProperties { get; } = new();
+
+    // A library exports `get_`/`set_` for every public field of its classes, these are the ones it emits
+    public Dictionary<(FieldSymbol Field, bool IsSetter), DeclaredFunction> FieldAccessors { get; } = new();
+
+    // Exported entry points a library emits itself: `_New` wrappers that allocate a class, and the shorter calls a default value allows
+    public List<DefaultEntry> DefaultEntries { get; } = [];
+
+    // The exported function that dispatches a virtual method through the vtable, next to the implementation
+    public List<DispatchThunk> DispatchThunks { get; } = [];
+
     // Operator overloads, declared like methods with self first
     public Dictionary<OperatorSymbol, DeclaredFunction> Operators { get; } = new(ReferenceEqualityComparer.Instance);
     public List<StaticInitializer> Initializers { get; } = [];
@@ -44,6 +56,12 @@ public sealed class MemberTable
     // The vtable a class, struct or record hands out when it is used as a trait
     public Dictionary<(TypeSymbol Type, TraitSymbol Trait), LLVMValueRef> TraitVTables { get; } = new();
 }
+
+// The first `Arity` parameters come from the caller, the rest from their defaults; `Target` is the function the entry ends in.
+// With a `Constructor` the entry allocates an object of `Owner`, passes it to the init function `Target` and returns it.
+public sealed record DefaultEntry(DeclaredFunction Wrapper, DeclaredFunction Target, ValueList<ParamSymbol> Parameters, int Arity, ConstructorKey? Constructor, TypeSymbol? Owner);
+
+public sealed record DispatchThunk(FunctionSymbol Function, DeclaredFunction Implementation, DeclaredFunction Thunk);
 
 public sealed record VirtualSlot(string Key, FunctionSymbol Implementation);
 

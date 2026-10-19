@@ -1,3 +1,4 @@
+using Luft.Ast;
 using Luft.Ast.Nodes;
 using Luft.TypeChecker.Symbols;
 using Luft.Utility;
@@ -76,14 +77,19 @@ public class TypeLookup : AstVisitor
     }
     private static string Describe(string? libraryId) => libraryId is null ? "the project" : $"the library '{libraryId}'";
     private void AddType(string name, TypeSymbol symbol) => AddOverloadable(CurrentScope.Types, name, symbol);
+    private TypeSymbol? _owner;
+
     private void AddDecl(TypeSymbol symbol, DeclarationNode node)
     {
         var oldScope = CurrentScope;
+        var oldOwner = _owner;
         CurrentScope = symbol.Scope;
+        _owner = symbol;
 
         Visit(node);
         
         CurrentScope = oldScope;
+        _owner = oldOwner;
     }
 
     #endregion
@@ -178,6 +184,18 @@ public class TypeLookup : AstVisitor
     }
     protected override void VisitField(FieldDeclarationNode node)
     {
+        // A library class is opaque: its public fields are reached through the exported `get_`/`set_` functions, which makes them automatic properties here
+        if (_libraryId is not null && _owner is ClassSymbol && node.AccessMod == AccessMod.Public
+            && !node.MemberMods.HasFlag(MemberMod.Static) && node.VarKind != VariableKind.Const)
+        {
+            var getter = new PropertyAccessorNode(AccessMod.Public, null, PropertyAccessorKind.Get, node.Span);
+            var setter = node.VarKind == VariableKind.Var ? new PropertyAccessorNode(AccessMod.Public, null, PropertyAccessorKind.Set, node.Span) : null;
+            var property = new PropertyDeclarationNode(node.Annotations, node.AccessMod, node.InheritanceMod, node.MemberMods, node.Type, node.Name, getter, setter, null, node.Span);
+
+            AddOverloadable(CurrentScope.Properties, node.Name, new PropertySymbol(node.Name, node.AccessMod, property));
+            return;
+        }
+
         AddOverloadable(CurrentScope.Fields, node.Name, new FieldSymbol(node.Name, node.AccessMod, node));
     }
     protected override void VisitPrimaryConstructor(PrimaryConstructorDeclarationNode node)

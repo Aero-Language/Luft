@@ -325,6 +325,12 @@ public sealed class TypeLowering : AeroThrower
             Fail($"'{symbol.Name}' is generic and cannot be laid out yet, generics need monomorphization", span);
             return null;
         }
+        if (symbol.Module.IsLibrary && symbol is not ClassSymbol)
+        {
+            // The header does not say how big a library's struct is, the library only answers `Size()` and `Align()` at run time
+            Fail($"'{symbol.Name}' is a {(symbol is RecordSymbol ? "record" : "struct")} of a library, which cannot be used by value yet.", span);
+            return null;
+        }
         if (!_building.Add(symbol))
         {
             Fail($"'{symbol.Name}' contains itself by value", span);

@@ -81,6 +81,7 @@ public sealed class CodeGenerator : AeroThrower, IDisposable
         if (_types.HasErrors) return false;
 
         DeclareVTables();
+        EmitDispatchThunks();
         DeclareTraitVTables();
 
         var failed = !EmitAll();
@@ -236,6 +237,10 @@ public sealed class CodeGenerator : AeroThrower, IDisposable
             {
                 if (!_emitted.Add(key)) continue;
                 progress = true;
+
+                // The constructors of a library class are only named here
+                if (key.Type.Module.IsLibrary) continue;
+
                 using var emitter = CreateEmitter();
                 emitter.EmitConstructor(key, declared);
                 ok &= !emitter.HasErrors;
@@ -244,8 +249,28 @@ public sealed class CodeGenerator : AeroThrower, IDisposable
             {
                 if (!_emitted.Add(key)) continue;
                 progress = true;
+
+                // A library holds the storage and the code of its properties
+                if (_members.ExternalProperties.Contains(key.Property)) continue;
+
                 using var emitter = CreateEmitter();
                 emitter.EmitAccessor(key, declared);
+                ok &= !emitter.HasErrors;
+            }
+            foreach (var (key, declared) in _members.FieldAccessors.ToList())
+            {
+                if (!_emitted.Add(key)) continue;
+                progress = true;
+                using var emitter = CreateEmitter();
+                emitter.EmitFieldAccessor(key.Field, key.IsSetter, declared);
+                ok &= !emitter.HasErrors;
+            }
+            foreach (var entry in _members.DefaultEntries.ToList())
+            {
+                if (!_emitted.Add(entry)) continue;
+                progress = true;
+                using var emitter = CreateEmitter();
+                emitter.EmitEntry(entry);
                 ok &= !emitter.HasErrors;
             }
             foreach (var (symbol, declared) in _members.Operators.ToList())
@@ -368,7 +393,10 @@ public sealed class CodeGenerator : AeroThrower, IDisposable
             if (hasSelf) type = LLVMTypeRef.CreateFunction(type.Value.ReturnType, new[] { _types.Ptr }.Concat(type.Value.GetParamTypes()).ToArray());
 
             var external = f.Access == AccessMod.Public && exported;
-            var name = external ? ExportName(f, scope, path) : InternalName(f, path);
+
+            // A virtual method of a library class is exported as a function that dispatches through the vtable, the implementation stays inside
+            var dispatched = external && IsLibrary && owner is ClassSymbol && IsVirtualMethod(f);
+            var name = external && !dispatched ? ExportName(f, scope, path) : InternalName(f, path);
             if (!symbols.Add(name))
             {
                 Error($"The symbol '{name}' is defined more than once.", f.Span);
@@ -377,20 +405,52 @@ public sealed class CodeGenerator : AeroThrower, IDisposable
 
             var value = Module.AddFunction(name, type.Value);
             if (f.Access == AccessMod.Private) value.Linkage = LLVMLinkage.LLVMInternalLinkage;
-            else if (!external) value.Visibility = LLVMVisibility.LLVMHiddenVisibility;
+            else if (!external || dispatched) value.Visibility = LLVMVisibility.LLVMHiddenVisibility;
             // external otherwise, callable from any language
 
-            _functions[f] = new DeclaredFunction(value, type.Value, scope, owner, hasSelf);
+            var declared = new DeclaredFunction(value, type.Value, scope, owner, hasSelf);
+            _functions[f] = declared;
+
+            if (!(external && IsLibrary)) continue;
+
+            // Calls from outside go through the dispatching function, the default entry points end in it as well
+            var target = declared;
+            if (dispatched)
+            {
+                var thunkName = ExportName(f, scope, path);
+                if (!symbols.Add(thunkName))
+                {
+                    Error($"The symbol '{thunkName}' is defined more than once.", f.Span);
+                    continue;
+                }
+
+                var thunk = Module.AddFunction(thunkName, type.Value);
+                target = new DeclaredFunction(thunk, type.Value, scope, owner, hasSelf);
+                _members.DispatchThunks.Add(new DispatchThunk(f, declared, target));
+            }
+            DeclareDefaultEntries(f, target, scope, owner, path, hasSelf, symbols);
         }
 
         DeclareExtensionFunctions(scope, exported, symbols);
         DeclareExtensionProperties(scope, exported, symbols);
         DeclareFields(scope, owner, path, exported, symbols);
+        if (IsLibrary && exported && owner is ClassSymbol) DeclareFieldAccessors(scope, owner, path, symbols);
         DeclareProperties(scope, owner, path, exported, symbols);
         if (owner is not null) DeclareOperators(scope, owner, path, exported, symbols);
 
-        // The types of a library are opaque, they are declared with the library support for classes, structs and records
-        if (_declaringModule is { IsLibrary: true }) return;
+        // The types of a library are opaque: only its public, non generic classes can be used, through the functions the library exports
+        if (_declaringModule is { IsLibrary: true })
+        {
+            foreach (var symbol in scope.Types.Values.SelectMany(l => l))
+            {
+                if (symbol is not ClassSymbol { Access: AccessMod.Public } libraryClass || symbol.GenericParameters.Count > 0) continue;
+
+                var libraryPath = path.Length == 0 ? symbol.Name : $"{path}.{symbol.Name}";
+                DeclareLibraryConstructors(libraryClass, libraryPath, symbols);
+                DeclareScope(symbol.Scope, symbol, libraryPath, true, symbols);
+            }
+            return;
+        }
 
         foreach (var symbol in scope.Types.Values.SelectMany(l => l))
         {
@@ -406,8 +466,137 @@ public sealed class CodeGenerator : AeroThrower, IDisposable
 
             if (symbol is ClassSymbol classSymbol) _classes.Add((classSymbol, nested, _declaringModule!));
 
+            // An object of a library class is laid out by the library, so nothing here can extend it
+            if (_types.BaseOf(symbol) is ClassSymbol { Module.IsLibrary: true } libraryBase)
+                Error($"'{symbol.Name}' cannot derive from '{libraryBase.Name}', classes of a library cannot be extended.", symbol.Span);
+
             DeclareConstructors(symbol, nested, nestedExported, symbols);
             DeclareScope(symbol.Scope, symbol, nested, nestedExported, symbols);
+
+            // A struct or record is allocated by the caller, which asks the library how big it is
+            if (IsLibrary && nestedExported && symbol is StructSymbol or RecordSymbol) DeclareLayoutQueries(symbol, nested, symbols);
+        }
+    }
+
+    private static bool IsVirtualMethod(FunctionSymbol f)
+        => f.InheritanceMod is InheritanceMod.Virtual or InheritanceMod.Abstract or InheritanceMod.Implements or InheritanceMod.Sealed
+           && !f.MemberMods.HasFlag(MemberMod.Static) && f.GenericParameters.Count == 0;
+
+    // How many parameters at the end have a default value
+    private static int DefaultCount(ValueList<ParamSymbol> parameters)
+    {
+        var count = 0;
+        foreach (var parameter in parameters.Reverse())
+        {
+            if (parameter.Initializer is null) break;
+            count++;
+        }
+        return count;
+    }
+
+    // The header lists one overload per call a default allows, so the library exports an entry point for each of them
+    private void DeclareDefaultEntries(FunctionSymbol f, DeclaredFunction target, TypeScope scope, TypeSymbol? owner, string path, bool hasSelf, HashSet<string> symbols)
+    {
+        var optional = DefaultCount(f.Parameters);
+        for (var count = f.Parameters.Count - 1; count >= f.Parameters.Count - optional; count--)
+        {
+            var type = _types.LowerFunction(f.ReturnType, f.Parameters.Take(count).Select(p => p.Type), scope, f.Span);
+            if (type is null) continue;
+
+            if (hasSelf) type = LLVMTypeRef.CreateFunction(type.Value.ReturnType, new[] { _types.Ptr }.Concat(type.Value.GetParamTypes()).ToArray());
+
+            var name = ExportName(f, scope, path, count);
+            if (!symbols.Add(name))
+            {
+                Error($"The symbol '{name}' is defined more than once.", f.Span);
+                continue;
+            }
+
+            var value = Module.AddFunction(name, type.Value);
+            _members.DefaultEntries.Add(new DefaultEntry(new DeclaredFunction(value, type.Value, scope, owner, hasSelf), target, f.Parameters, count, null, owner));
+        }
+    }
+
+    // get_Name and set_Name for every public field of a class, the consumer never sees the layout
+    private void DeclareFieldAccessors(TypeScope scope, TypeSymbol owner, string path, HashSet<string> symbols)
+    {
+        foreach (var field in scope.Fields.Values.SelectMany(l => l))
+        {
+            if (field.Access != AccessMod.Public || field.Declaration.MemberMods.HasFlag(MemberMod.Static) || field.VarKind == VariableKind.Const) continue;
+
+            var type = field.Type;
+            if (type.IsAuto && field.Initializer is not null && _table.Typed.TypeOf(field.Initializer) is { } inferred) type = inferred;
+            if (!_types.TryLower(type, scope, field.Span, out var lowered)) continue;
+
+            foreach (var isSetter in new[] { false, true })
+            {
+                if (isSetter && field.VarKind != VariableKind.Var) continue;
+
+                var functionType = isSetter
+                    ? LLVMTypeRef.CreateFunction(_context.VoidType, [_types.Ptr, lowered])
+                    : LLVMTypeRef.CreateFunction(lowered, [_types.Ptr]);
+
+                var name = GlobalName($"{(isSetter ? "set" : "get")}_{field.Name}", path, true);
+                if (!symbols.Add(name))
+                {
+                    Error($"The symbol '{name}' is defined more than once.", field.Span);
+                    continue;
+                }
+
+                _members.FieldAccessors[(field, isSetter)] = new DeclaredFunction(Module.AddFunction(name, functionType), functionType, scope, owner, true);
+            }
+        }
+    }
+
+    // Module_Type_Size() and Module_Type_Align() give the memory a struct or record takes
+    private void DeclareLayoutQueries(TypeSymbol type, string path, HashSet<string> symbols)
+    {
+        var layout = _types.LayoutOf(type, type.Span);
+        if (layout is null) return;
+
+        foreach (var (query, value) in new[] { ("Size", layout.StructType.SizeOf), ("Align", layout.StructType.AlignOf) })
+        {
+            var name = GlobalName(query, path, true);
+            if (!symbols.Add(name))
+            {
+                Error($"The symbol '{name}' is defined more than once.", type.Span);
+                continue;
+            }
+
+            var function = Module.AddFunction(name, LLVMTypeRef.CreateFunction(_context.Int64Type, []));
+
+            using var b = _context.CreateBuilder();
+            b.PositionAtEnd(_context.AppendBasicBlock(function, "entry"));
+            b.BuildRet(b.BuildIntCast(value, _context.Int64Type, "query"));
+        }
+    }
+
+    // The thunks have no body of their own: they load the function from the object's vtable and call it
+    private void EmitDispatchThunks()
+    {
+        foreach (var thunk in _members.DispatchThunks)
+        {
+            if (!_members.VirtualSlots.TryGetValue(thunk.Function, out var slot))
+            {
+                Error($"The virtual method '{thunk.Function.Name}' has no vtable slot, it does not override anything.", thunk.Function.Span);
+                continue;
+            }
+
+            var function = thunk.Thunk.Value;
+            using var b = _context.CreateBuilder();
+            b.PositionAtEnd(_context.AppendBasicBlock(function, "entry"));
+
+            var table = b.BuildLoad2(_types.Ptr, function.GetParam(0), "vtable");
+            var entry = b.BuildGEP2(_types.Ptr, table, new[] { LLVMValueRef.CreateConstInt(_context.Int32Type, (ulong)slot) }, "slot");
+            var target = b.BuildLoad2(_types.Ptr, entry, "virtual");
+
+            var arguments = new LLVMValueRef[function.ParamsCount];
+            for (var i = 0u; i < arguments.Length; i++) arguments[i] = function.GetParam(i);
+
+            var isVoid = thunk.Thunk.Type.ReturnType.Kind == LLVMTypeKind.LLVMVoidTypeKind;
+            var call = b.BuildCall2(thunk.Thunk.Type, target, arguments, isVoid ? "" : "call");
+            if (isVoid) b.BuildRetVoid();
+            else b.BuildRet(call);
         }
     }
 
@@ -637,7 +826,8 @@ public sealed class CodeGenerator : AeroThrower, IDisposable
     {
         foreach (var o in scope.Operators.Values.SelectMany(l => l))
         {
-            if (o.Body is null) continue;
+            // A library's operators have no body in its header, the library exports them
+            if (o.Body is null && _declaringModule is not { IsLibrary: true }) continue;
 
             var type = _types.LowerFunction(o.ReturnType, o.Parameters.Select(p => p.Type), scope, o.Span);
             if (type is null) continue;
@@ -704,7 +894,7 @@ public sealed class CodeGenerator : AeroThrower, IDisposable
             {
                 _members.GlobalProperties.Add(p);
 
-                if (_types.NeedsBacking(p) && _types.TryLower(p.Type, scope, p.Span, out var lowered))
+                if (_declaringModule is not { IsLibrary: true } && _types.NeedsBacking(p) && _types.TryLower(p.Type, scope, p.Span, out var lowered))
                 {
                     var name = GlobalName($"<backing>{p.Name}", path, false);
                     if (!symbols.Add(name))
@@ -725,11 +915,20 @@ public sealed class CodeGenerator : AeroThrower, IDisposable
         }
     }
 
-    // Only accessors with a body are functions, an automatic one reads or writes the backing value directly
+    // A property without any accessor is stored and can be read and written, the same rule on both sides of a library boundary
+    private static bool HasGetter(PropertySymbol p) => p.Getter is not null || p.Setter is null;
+    private static bool HasSetter(PropertySymbol p) => p.Setter is not null || p.Getter is null;
+
+    // Only accessors with a body are functions, an automatic one reads or writes the backing value directly.
+    // The public properties of a library are the exception: the library exports an accessor for each of them (its own code emits the automatic ones) and the consumer calls it.
     private void DeclareAccessor(PropertySymbol p, bool isSetter, TypeScope scope, TypeSymbol? owner, string path, bool hasSelf, bool external, HashSet<string> symbols, AeroType? receiver = null)
     {
         var accessor = isSetter ? p.Setter : p.Getter;
-        if (accessor?.Body is null) return;
+
+        var consumes = _declaringModule is { IsLibrary: true };
+        var opaque = (IsLibrary || consumes) && external && receiver is null && (!hasSelf || owner is ClassSymbol) && (isSetter ? HasSetter(p) : HasGetter(p));
+        if (accessor?.Body is null && !opaque) return;
+        if (consumes && opaque) _members.ExternalProperties.Add(p);
 
         var type = _types.LowerFunction(isSetter ? AeroType.Void : p.Type, isSetter ? new[] { p.Type } : Array.Empty<AeroType>(), scope, p.Span);
         if (type is null) return;
@@ -787,9 +986,11 @@ public sealed class CodeGenerator : AeroThrower, IDisposable
             var functionType = LLVMTypeRef.CreateFunction(lowered.Value.ReturnType, new[] { _types.Ptr }.Concat(lowered.Value.GetParamTypes()).ToArray());
 
             var external = exported && (key.Symbol is null || key.Symbol.Access == AccessMod.Public);
-            var suffix = string.Join("_", parameters.Select(p => Sanitize(p.Type.ToString()!)));
-            var name = external
-                ? $"{(modulePrefix.Length == 0 ? "" : modulePrefix.Replace('.', '_') + "_")}{path.Replace('.', '_')}_New{(suffix.Length == 0 ? "" : "_" + suffix)}"
+
+            // A library hands its classes out through `_New` wrappers that allocate, the init function itself stays inside
+            var opaque = external && IsLibrary && type is ClassSymbol;
+            var name = external && !opaque
+                ? NewName(modulePrefix, path, parameters.Take(parameters.Count))
                 : $"{(modulePrefix.Length == 0 ? "" : modulePrefix + ".")}{path}.<init:{key.Kind}>({string.Join(",", parameters.Select(p => p.Type))})";
 
             if (!symbols.Add(name))
@@ -800,22 +1001,80 @@ public sealed class CodeGenerator : AeroThrower, IDisposable
 
             var value = Module.AddFunction(name, functionType);
             if (key.Symbol is { Access: AccessMod.Private }) value.Linkage = LLVMLinkage.LLVMInternalLinkage;
-            else if (!external) value.Visibility = LLVMVisibility.LLVMHiddenVisibility;
+            else if (!external || opaque) value.Visibility = LLVMVisibility.LLVMHiddenVisibility;
 
-            _constructors[key] = new DeclaredFunction(value, functionType, type.Scope, type, true);
+            var declared = new DeclaredFunction(value, functionType, type.Scope, type, true);
+            _constructors[key] = declared;
+
+            if (opaque) DeclareNewEntries(key, parameters, declared, type, path, modulePrefix, symbols);
+        }
+    }
+
+    // Module_Path_New[_ParameterTypes]
+    private static string NewName(string modulePrefix, string path, IEnumerable<ParamSymbol> parameters)
+    {
+        var suffix = string.Join("_", parameters.Select(p => Sanitize(p.Type.ToString()!)));
+        return $"{(modulePrefix.Length == 0 ? "" : modulePrefix.Replace('.', '_') + "_")}{path.Replace('.', '_')}_New{(suffix.Length == 0 ? "" : "_" + suffix)}";
+    }
+
+    // The exported constructors of a library class: one `_New` per call its parameters' defaults allow, each allocating the object and returning it
+    private void DeclareNewEntries(ConstructorKey key, ValueList<ParamSymbol> parameters, DeclaredFunction init, TypeSymbol type, string path, string modulePrefix, HashSet<string> symbols)
+    {
+        for (var count = parameters.Count; count >= parameters.Count - DefaultCount(parameters); count--)
+        {
+            var lowered = _types.LowerFunction(AeroType.Void, parameters.Take(count).Select(p => p.Type), type.Scope, type.Span);
+            if (lowered is null) continue;
+
+            var functionType = LLVMTypeRef.CreateFunction(_types.Ptr, lowered.Value.GetParamTypes());
+            var name = NewName(modulePrefix, path, parameters.Take(count));
+            if (!symbols.Add(name))
+            {
+                Error($"The symbol '{name}' is defined more than once.", type.Span);
+                continue;
+            }
+
+            var wrapper = new DeclaredFunction(Module.AddFunction(name, functionType), functionType, type.Scope, type);
+            _members.DefaultEntries.Add(new DefaultEntry(wrapper, init, parameters, count, key, type));
+        }
+    }
+
+    // A class of a library: its constructors are the library's `_New` functions, which take the arguments and return the object
+    private void DeclareLibraryConstructors(ClassSymbol type, string path, HashSet<string> symbols)
+    {
+        var modulePrefix = type.Module.ModulePath;
+
+        foreach (var (key, parameters) in ConstructorShapes.Of(type, null))
+        {
+            // The header only lists public constructors
+            if (key.Symbol is { Access: not AccessMod.Public }) continue;
+
+            var lowered = _types.LowerFunction(AeroType.Void, parameters.Select(p => p.Type), type.Scope, type.Span);
+            if (lowered is null) continue;
+
+            var functionType = LLVMTypeRef.CreateFunction(_types.Ptr, lowered.Value.GetParamTypes());
+            var name = NewName(modulePrefix, path, parameters);
+            if (!symbols.Add(name))
+            {
+                Error($"The symbol '{name}' is defined more than once.", type.Span);
+                continue;
+            }
+
+            _constructors[key] = new DeclaredFunction(Module.AddFunction(name, functionType), functionType, type.Scope, type);
         }
     }
 
     // Module_Sub_Type_Name, underscores are banned in Aero names so '_' never collides. Only overloads get a parameter suffix.
-    private static string ExportName(FunctionSymbol f, TypeScope scope, string path)
+    // The header only lists public overloads, one per call a default value allows, and the suffix follows that list. `arity` names an entry point that takes only the first parameters.
+    private static string ExportName(FunctionSymbol f, TypeScope scope, string path, int? arity = null)
     {
         var prefix = f.Module.ModulePath.Length == 0 ? "" : f.Module.ModulePath.Replace('.', '_') + "_";
         if (path.Length > 0) prefix += path.Replace('.', '_') + "_";
         var name = prefix + f.Name;
 
-        if (!scope.Functions.TryGetValue(f.Name, out var overloads) || overloads.Count <= 1) return name;
+        if (!scope.Functions.TryGetValue(f.Name, out var overloads)) return name;
+        if (overloads.Where(o => o.Access == AccessMod.Public).Sum(o => 1 + DefaultCount(o.Parameters)) <= 1) return name;
 
-        var suffix = string.Join("_", f.Parameters.Select(p => Sanitize(p.Type.ToString()!)));
+        var suffix = string.Join("_", f.Parameters.Take(arity ?? f.Parameters.Count).Select(p => Sanitize(p.Type.ToString()!)));
         return suffix.Length == 0 ? name : $"{name}_{suffix}";
     }
 

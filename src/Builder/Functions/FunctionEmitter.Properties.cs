@@ -20,6 +20,9 @@ public sealed partial class FunctionEmitter
 
     private bool IsGlobalProperty(PropertySymbol property) => _members.GlobalProperties.Contains(property);
 
+    // The storage and the accessors of a library's property are inside the library, calls go through the exported functions
+    private bool IsExternalProperty(PropertySymbol property) => _members.ExternalProperties.Contains(property);
+
     private bool TryGetPropertyBinding(ExpressionNode expression, out PropertySymbol property)
     {
         property = null!;
@@ -118,7 +121,7 @@ public sealed partial class FunctionEmitter
 
         if (!TryPropertyReceiver(expression, property, false, out var pointer, out var owner)) return false;
 
-        if (property.Getter?.Body is not null)
+        if (property.Getter?.Body is not null || IsExternalProperty(property))
         {
             if (!_members.Accessors.TryGetValue(new AccessorKey(property, false), out var getter))
             {
@@ -159,7 +162,7 @@ public sealed partial class FunctionEmitter
 
         var coerced = Coerce(value, valueType, property.Type, span);
 
-        if (property.Setter?.Body is not null)
+        if (property.Setter?.Body is not null || IsExternalProperty(property))
         {
             if (!_members.Accessors.TryGetValue(new AccessorKey(property, true), out var setter))
             {
@@ -194,7 +197,7 @@ public sealed partial class FunctionEmitter
         expression = StripScopes(expression);
         if (!TryGetPropertyBinding(expression, out var property)) return false;
 
-        if (HasAccessorBody(property))
+        if (HasAccessorBody(property) || IsExternalProperty(property))
         {
             Fail($"The property '{property.Name}' has accessors, so it can only be assigned or compound assigned so far", expression.Span);
             return false;
@@ -229,7 +232,7 @@ public sealed partial class FunctionEmitter
     private void EmitAccessorCore(AccessorKey key, DeclaredFunction declared)
     {
         var property = key.Property;
-        var accessor = key.IsSetter ? property.Setter! : property.Getter!;
+        var accessor = key.IsSetter ? property.Setter : property.Getter;
 
         _function = declared.Value;
         _scope = declared.Scope;
@@ -255,9 +258,23 @@ public sealed partial class FunctionEmitter
             _backingAeroType = property.Type;
         }
 
+        // A library exports an accessor for its automatic properties too: it reads or writes the backing value
+        if (accessor?.Body is null)
+        {
+            if (_backing.Handle == IntPtr.Zero) return;
+
+            if (key.IsSetter)
+            {
+                _builder.BuildStore(_function.GetParam((uint)offset), _backing);
+                _builder.BuildRetVoid();
+            }
+            else _builder.BuildRet(_builder.BuildLoad2(_backingType, _backing, property.Name));
+            return;
+        }
+
         if (key.IsSetter && !BindSetterValue(accessor, property, _function.GetParam((uint)offset))) return;
 
-        LowerStatements(accessor.Body!.Statements, true);
+        LowerStatements(accessor.Body.Statements, true);
 
         if (IsTerminated()) return;
         if (_returnType == AeroType.Void) _builder.BuildRetVoid();

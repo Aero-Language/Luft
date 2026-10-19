@@ -14,7 +14,8 @@ public readonly record struct ConstructorKey(TypeSymbol Type, ConstructorSymbol?
 public static class ConstructorShapes
 {
     // `arguments` are the type arguments when the type is an instance of a generic one
-    public static List<(ConstructorKey Key, ValueList<ParamSymbol> Parameters)> Of(TypeSymbol type, TypeLayout layout, IReadOnlyDictionary<string, AeroType>? arguments = null)
+    // `layout` is null for the opaque classes of a library, which are only known by their declarations
+    public static List<(ConstructorKey Key, ValueList<ParamSymbol> Parameters)> Of(TypeSymbol type, TypeLayout? layout, IReadOnlyDictionary<string, AeroType>? arguments = null)
     {
         var result = new List<(ConstructorKey Key, ValueList<ParamSymbol> Parameters)>();
 
@@ -55,6 +56,6 @@ public static class ConstructorShapes
     }
 
     // A parameter that becomes a field takes the field's resolved type, so an inferred one is never Auto
-    private static ParamSymbol Parameter(string name, AeroType type, VariableKind kind, ExpressionNode? initializer, TypeLayout layout)
-        => new(name, layout.Find(name)?.Type ?? type, kind, initializer);
+    private static ParamSymbol Parameter(string name, AeroType type, VariableKind kind, ExpressionNode? initializer, TypeLayout? layout)
+        => new(name, layout?.Find(name)?.Type ?? type, kind, initializer);
 }

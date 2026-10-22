@@ -456,6 +456,7 @@ public class BodyResolver : AeroThrower
     private bool IsAssignable(AeroType from, AeroType to)
     {
         if (from == to || from.IsAuto || to.IsAuto) return true;
+        if (from == AeroType.Null) return to.IsNullable; // null only fits nullable types
         if (from is ArrayType fa && to is ArrayType ta) return IsAssignable(fa.ElementType, ta.ElementType);
 
         // Parameter names don't matter, so a function reference fits any lambda type with the same shape
@@ -646,7 +647,8 @@ public class BodyResolver : AeroThrower
             CheckTypes(ResolveExpression(elseIf.body, scope, bScope), returnType, scope, elseIf.condition.Span);
         }
 
-        if (expr.ElseBody is not null) ResolveExpression(expr.ElseBody, scope, bScope);
+        if (expr.ElseBody is not null)
+            CheckTypes(ResolveExpression(expr.ElseBody, scope, bScope), returnType, scope, expr.ElseBody.Span);
 
         return returnType;
     }

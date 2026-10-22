@@ -569,7 +569,7 @@ public sealed class AstBuilder : SafeIterator<Token>
             var type = PopType();
             
             ExpressionNode? init = null;
-            if (Peek().Type is TokenType.Equality)
+            if (Peek().Type is TokenType.Assign)
             {
                 Pop();
                 init = PopExpression();
@@ -1608,7 +1608,7 @@ public sealed class AstBuilder : SafeIterator<Token>
                 "static" => MemberMod.Static,
                 "weak" => MemberMod.Weak,
                 "partial" => MemberMod.Partial,
-                "unsage" => MemberMod.Unsafe,
+                "unsafe" => MemberMod.Unsafe,
                 _ => MemberMod.None
             };
         }
@@ -1774,7 +1774,7 @@ public sealed class AstBuilder : SafeIterator<Token>
             var type = PopType();
             ExpressionNode? init = null;
 
-            if (Peek().Type is TokenType.Equality)
+            if (Peek().Type is TokenType.Assign)
             {
                 Pop();
 

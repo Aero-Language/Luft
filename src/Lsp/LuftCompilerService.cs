@@ -4,6 +4,7 @@ using Luft.Lexer;
 using Luft.TypeChecker;
 using Luft.Utility;
 using OmniSharp.Extensions.LanguageServer.Protocol;
+using OmniSharp.Extensions.LanguageServer.Protocol.Models;
 
 namespace Luft.Lsp;
 
@@ -26,6 +27,8 @@ public class LuftCompilerService
 
     private readonly object _gate = new();
     private readonly Dictionary<string, ParsedFile> _parsed = new();
+    private readonly Dictionary<string, FileNode> _good = new(); // last tree of each file that parsed without errors
+    private readonly HashSet<string> _open = new(); // files whose text comes from the editor, not from disk
 
     public Snapshot Current { get; private set; } = Snapshot.Empty;
 
@@ -42,7 +45,9 @@ public class LuftCompilerService
     {
         lock (_gate)
         {
-            Parse(PathOf(uri), text);
+            var path = PathOf(uri);
+            _open.Add(path);
+            Parse(path, text);
             Rebuild();
         }
     }
@@ -53,10 +58,50 @@ public class LuftCompilerService
         lock (_gate)
         {
             var path = PathOf(uri);
-            if (File.Exists(path)) Parse(path, File.ReadAllText(path));
-            else _parsed.Remove(path);
+            _open.Remove(path);
+
+            try
+            {
+                if (File.Exists(path)) Parse(path, File.ReadAllText(path));
+                else Remove(path);
+            }
+            catch (IOException) { }
+
             Rebuild();
         }
+    }
+
+    // Created, changed or deleted files reported by the client's file watcher; open files keep the editor text
+    public void ApplyDiskChanges(IEnumerable<(string Path, FileChangeType Type)> changes)
+    {
+        lock (_gate)
+        {
+            foreach (var (path, type) in changes)
+            {
+                if (_open.Contains(path)) continue;
+
+                if (type == FileChangeType.Deleted)
+                {
+                    // A deleted folder arrives as one event for the folder itself
+                    var prefix = path + Path.DirectorySeparatorChar;
+                    foreach (var gone in _parsed.Keys.Where(k => k == path || k.StartsWith(prefix)).ToList()) Remove(gone);
+                    continue;
+                }
+
+                if (!path.EndsWith(".aero") || path.Split(Path.DirectorySeparatorChar).Any(p => SkippedDirs.Contains(p))) continue;
+
+                try { if (File.Exists(path)) Parse(path, File.ReadAllText(path)); }
+                catch (IOException) { }
+            }
+
+            Rebuild();
+        }
+    }
+
+    private void Remove(string path)
+    {
+        _parsed.Remove(path);
+        _good.Remove(path);
     }
 
     public void LoadWorkspace(string root)
@@ -88,6 +133,7 @@ public class LuftCompilerService
             var tokens = new Tokenizer { Diagnostics = bag }.TokenizeSource(text, path);
             var ast = new AstBuilder { Diagnostics = bag }.BuildAst(tokens);
             _parsed[path] = new ParsedFile(path, text, tokens, ast, bag.ToList());
+            if (!bag.HasErrors) _good[path] = ast;
         }
         catch (Exception) { }
     }
@@ -98,21 +144,38 @@ public class LuftCompilerService
         foreach (var file in _parsed.Values)
             foreach (var diagnostic in file.Diagnostics) bag.Add(diagnostic);
 
-        // Same rule as the CLI: don't type-check trees that are known to be broken.
-        // The previous table and index stay around so hover and completion keep working while typing.
+        // A file with parse errors is checked through its last good tree, so one broken file doesn't blind the rest.
+        // A file that never parsed cleanly can't stand in, so then the check is skipped to avoid false errors in the others.
+        var trees = new List<FileNode>();
+        var broken = new HashSet<string>();
+        var complete = true;
+
+        foreach (var file in _parsed.Values)
+        {
+            if (!file.Diagnostics.Any(d => d.IsError)) trees.Add(file.Ast);
+            else if (_good.TryGetValue(file.Path, out var good)) { trees.Add(good); broken.Add(file.Path); }
+            else complete = false;
+        }
+
+        // The previous table and index stay around so hover and completion keep working while typing
         var table = Current.Table;
         var index = Current.Index;
-        if (!bag.HasErrors && _parsed.Count > 0)
+        if (complete && trees.Count > 0)
         {
+            var check = new DiagnosticBag();
             try
             {
-                var fresh = new TypeLookup { Diagnostics = bag }.Run(_parsed.Values.Select(f => f.Ast).ToArray(), []);
-                new TypeResolver { Diagnostics = bag }.Run(fresh);
-                new BodyResolver { Diagnostics = bag }.Run(fresh);
+                var fresh = new TypeLookup { Diagnostics = check }.Run(trees.ToArray(), []);
+                new TypeResolver { Diagnostics = check }.Run(fresh);
+                new BodyResolver { Diagnostics = check }.Run(fresh);
                 table = fresh;
                 index = SymbolIndex.Build(fresh);
             }
             catch (Exception) { }
+
+            // Positions in a stale tree don't match the text, so its checker diagnostics are dropped
+            foreach (var d in check)
+                if (!broken.Contains(d.Span.FilePath)) bag.Add(d);
         }
 
         Current = new Snapshot(new Dictionary<string, ParsedFile>(_parsed), table, bag, index);

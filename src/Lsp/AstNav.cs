@@ -140,15 +140,15 @@ public static class AstNav
         _ => null
     }).OfType<string>().ToList();
 
-    // Parameters plus every variable declared before pos in the enclosing function-like member
+    // Parameters plus every variable visible at pos: block scoped, so only the blocks around pos count
     public static List<LocalVar> LocalsAt(List<AstNode> chain, TextLocation pos)
     {
         var result = new List<LocalVar>();
-        var owner = chain.LastOrDefault(n => n is FunctionDeclarationNode or OperatorDeclarationNode
+        var ownerIndex = chain.FindLastIndex(n => n is FunctionDeclarationNode or OperatorDeclarationNode
             or ConstructorDeclarationNode or DestructorDeclarationNode or PropertyDeclarationNode);
-        if (owner is null) return result;
+        if (ownerIndex < 0) return result;
 
-        switch (owner)
+        switch (chain[ownerIndex])
         {
             case FunctionDeclarationNode f: AddParams(f.Parameters, result); break;
             case OperatorDeclarationNode o: AddParams(o.Parameters, result); break;
@@ -156,7 +156,8 @@ public static class AstNav
             case PropertyDeclarationNode p: result.Add(new LocalVar("value", "parameter", p.Type, null, p.Span)); break;
         }
 
-        Collect(owner, pos, result);
+        // Outer scopes come first, so the innermost declaration of a name is the last one
+        for (var i = ownerIndex + 1; i < chain.Count; i++) AddScope(chain[i], pos, result);
         return result;
     }
 
@@ -165,24 +166,41 @@ public static class AstNav
         foreach (var p in parameters) acc.Add(new LocalVar(p.Name, "parameter", p.Type, p.Initializer, p.Span));
     }
 
-    static void Collect(AstNode node, TextLocation pos, List<LocalVar> acc)
+    static void AddScope(AstNode node, TextLocation pos, List<LocalVar> acc)
     {
         switch (node)
         {
-            case VariableStatementNode v when v.Span.Start < pos:
-                acc.Add(new LocalVar(v.Name, v.VarKind.AsString(), v.Type, v.Initializer, v.Span));
+            case BlockExpressionNode b:
+                foreach (var s in b.Statements)
+                    if (s is VariableStatementNode v && v.Span.Start < pos)
+                        acc.Add(new LocalVar(v.Name, v.VarKind.AsString(), v.Type, v.Initializer, v.Span));
                 break;
-            case ForExpressionNode f when f.Span.Start < pos:
+            case ForExpressionNode f when !f.Collection.Span.Contains(pos):
                 acc.Add(new LocalVar(f.Item.Name, "val", f.Item.Type, null, f.Item.Span));
                 break;
-            case LambdaExpressionNode l when l.Span.Start < pos:
+            case LambdaExpressionNode l:
                 AddParams(l.Parameters, acc);
                 break;
-            case TypePattern { Binding: not null } t:
-                acc.Add(new LocalVar(t.Binding, "val", t.Type, null, t.Span));
+            case IfExpressionNode i:
+                AddBindings(i.Condition, pos, acc);
+                foreach (var (c, _) in i.ElseIfs) AddBindings(c, pos, acc);
+                break;
+            case WhileStatementNode w:
+                AddBindings(w.Condition, pos, acc);
+                break;
+            case CaseExpressionNode c:
+                AddBindings(c.Pattern, pos, acc);
+                if (c.Guard is not null) AddBindings(c.Guard, pos, acc);
                 break;
         }
+    }
 
-        foreach (var child in Children(node)) Collect(child, pos, acc);
+    // Names bound by type patterns inside a condition, pattern or guard
+    static void AddBindings(AstNode node, TextLocation pos, List<LocalVar> acc)
+    {
+        if (node is TypePattern { Binding: not null } t && t.Span.Start < pos)
+            acc.Add(new LocalVar(t.Binding, "val", t.Type, null, t.Span));
+
+        foreach (var child in Children(node)) AddBindings(child, pos, acc);
     }
 }

@@ -15,6 +15,7 @@ public sealed class SymbolIndex
 
     public List<Decl> All { get; } = [];
     public Dictionary<string, Decl> TypeDecls { get; } = new();
+    public Dictionary<string, List<Decl>> TypeDeclsAll { get; } = new(); // same plain name in several modules
     public Dictionary<string, List<string>> Bases { get; } = new();
     public HashSet<string> TypeNames { get; } = new();
 
@@ -102,6 +103,8 @@ public sealed class SymbolIndex
         var decl = new Decl(t.Name, kind, $"{t.Access.AsString()} {kind} {t.Name}{generics}", t.Span, container, true, new ScalarType(t.Name));
         All.Add(decl);
         TypeDecls[t.Name] = decl;
+        if (!TypeDeclsAll.TryGetValue(t.Name, out var same)) TypeDeclsAll[t.Name] = same = [];
+        same.Add(decl);
         TypeNames.Add(t.Name);
         Bases[t.Name] = bases.Select(TypeName).OfType<string>().ToList();
 

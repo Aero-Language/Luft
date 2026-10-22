@@ -91,7 +91,7 @@ public sealed class Analyzer(Snapshot snap)
         if (tok.Type is TokenType.SelfLiteral)
         {
             var self = ctx.Types.LastOrDefault();
-            return self is null ? null : new Hit("self", name, $"self: {self}", Index.TypeDecls.GetValueOrDefault(self)?.Span, tok.Span);
+            return self is null ? null : new Hit("self", name, $"self: {self}", TypeDeclFor(self, file.Path)?.Span, tok.Span);
         }
 
         if (i > 0 && sig[i - 1].Type is TokenType.Dot)
@@ -100,16 +100,17 @@ public sealed class Analyzer(Snapshot snap)
             var members = owner is null
                 ? Index.All.Where(d => d.Container is not null && d.Name == name)
                 : Index.MembersOf(owner).Where(d => d.Name == name);
-            var member = members.FirstOrDefault();
+            var member = members.OrderBy(d => SameFile(d, file.Path)).FirstOrDefault();
             return member is null ? null : FromDecl(member, tok.Span);
         }
 
         if (ctx.Generics.Contains(name)) return new Hit("type parameter", name, $"type parameter {name}", null, tok.Span);
 
         var local = ctx.Locals.LastOrDefault(l => l.Name == name);
-        var typeDecl = Index.TypeDecls.GetValueOrDefault(name);
+        var typeDecl = TypeDeclFor(name, file.Path);
 
-        var values = Index.Named(name).Where(d => !IsTypeKind(d.Kind)).ToList();
+        // The same name can be declared in several files; the one next to the use wins
+        var values = Index.Named(name).Where(d => !IsTypeKind(d.Kind)).OrderBy(d => SameFile(d, file.Path)).ToList();
         var valueDecl = values.FirstOrDefault(d => d.Container is not null && ctx.Types.Contains(d.Container))
                         ?? values.FirstOrDefault(d => d.Container is null)
                         ?? values.FirstOrDefault();
@@ -123,6 +124,11 @@ public sealed class Analyzer(Snapshot snap)
         if (TypeTable.PrimitiveTypes.Any(p => p.Name == name)) return new Hit("builtin", name, $"builtin type {name}", null, tok.Span);
         return null;
     }
+
+    static int SameFile(Decl d, string path) => d.Span.FilePath == path ? 0 : 1;
+
+    Decl? TypeDeclFor(string name, string path)
+        => Index.TypeDeclsAll.TryGetValue(name, out var all) ? all.OrderBy(d => SameFile(d, path)).First() : null;
 
     static bool IsTypeKind(string kind)
         => kind is "class" or "struct" or "record" or "trait" or "enum" or "enum class" or "annotation" or "type";

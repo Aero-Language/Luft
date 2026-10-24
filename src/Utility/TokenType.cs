@@ -9,6 +9,8 @@ public enum TokenType
     // Literals (FloatLiteral MUST have a lower value than IntLiteral)
     FloatLiteral,           // Tested BEFORE IntLiteral (e.g., matches "3.14" instead of stopping at "3")
     IntLiteral,
+    LongLiteral,            // 10L
+    DoubleLiteral,          // 1.5d, 2d
     StringLiteral,
     CharLiteral,
     BooleanLiteral,

@@ -47,7 +47,9 @@ public sealed partial class FunctionEmitter
         if (IsKind(type, AeroType.String)) text = value;
         else if (IsKind(type, AeroType.Int)) text = BuildString("aero_str_from_int", value);
         else if (IsByte(type)) text = BuildString("aero_str_from_int", _builder.BuildZExt(value, _context.Int32Type, "wide"));
+        else if (IsLong(type)) text = BuildString("aero_str_from_long", value);
         else if (IsFloat(type)) text = BuildString("aero_str_from_float", value);
+        else if (IsDouble(type)) text = BuildString("aero_str_from_double", value);
         else if (IsKind(type, AeroType.Bool)) text = BuildString("aero_str_from_bool", value);
         else if (IsKind(type, AeroType.Char)) text = BuildString("aero_str_from_char", value);
         else

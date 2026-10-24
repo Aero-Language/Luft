@@ -14,6 +14,8 @@ public sealed class TypeTable
         AeroType.Bool,
         AeroType.Int,
         AeroType.Float,
+        AeroType.Long,
+        AeroType.Double,
         AeroType.Void,
         AeroType.Range,
     ];

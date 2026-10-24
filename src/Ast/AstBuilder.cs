@@ -816,7 +816,9 @@ public sealed class AstBuilder : SafeIterator<Token>
             case TokenType.CharLiteral
                 or TokenType.StringLiteral
                 or TokenType.IntLiteral
+                or TokenType.LongLiteral
                 or TokenType.FloatLiteral
+                or TokenType.DoubleLiteral
                 or TokenType.BooleanLiteral
                 or TokenType.NullLiteral
                 or TokenType.SelfLiteral
@@ -1127,12 +1129,26 @@ public sealed class AstBuilder : SafeIterator<Token>
                 }
                 obj = i;
                 break;
+            case TokenType.LongLiteral:
+                if (!TryParseLongLiteral(token.Value, out var l))
+                {
+                    Error("Long could not be parsed", startSpan);
+                }
+                obj = l;
+                break;
             case TokenType.FloatLiteral:
                 if (!float.TryParse(token.Value, out var f))
                 {
                     Error("Float could not be parsed", startSpan);
                 }
                 obj = f;
+                break;
+            case TokenType.DoubleLiteral:
+                if (!double.TryParse(token.Value, System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out var d))
+                {
+                    Error("Double could not be parsed", startSpan);
+                }
+                obj = d;
                 break;
             case TokenType.BooleanLiteral:
                 obj = token.Value == "true";
@@ -1922,6 +1938,35 @@ public sealed class AstBuilder : SafeIterator<Token>
         }
     }
     
+    bool TryParseLongLiteral(string text, out long result)
+    {
+        result = 0;
+        if (string.IsNullOrWhiteSpace(text)) return false;
+
+        string clean = text.Replace("_", "");
+
+        try
+        {
+            if (clean.StartsWith("0x", StringComparison.OrdinalIgnoreCase))
+            {
+                result = Convert.ToInt64(clean[2..], 16);
+                return true;
+            }
+
+            if (clean.StartsWith("0b", StringComparison.OrdinalIgnoreCase))
+            {
+                result = Convert.ToInt64(clean[2..], 2);
+                return true;
+            }
+
+            return long.TryParse(clean, out result);
+        }
+        catch
+        {
+            return false;
+        }
+    }
+
     // Helper methods
     void ExpectInstance(string[] instanceNames, string errorMessage, SourceSpan? location = null)
     {

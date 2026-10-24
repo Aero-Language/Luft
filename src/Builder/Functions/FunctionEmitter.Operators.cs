@@ -13,8 +13,12 @@ public sealed partial class FunctionEmitter
         => type is ScalarType { IsNullable: false } && type.Name == kind.Name;
 
     private static bool IsFloat(AeroType? t) => IsKind(t, AeroType.Float);
+    private static bool IsDouble(AeroType? t) => IsKind(t, AeroType.Double);
+    private static bool IsLong(AeroType? t) => IsKind(t, AeroType.Long);
+    private static bool IsFloating(AeroType? t) => IsFloat(t) || IsDouble(t);
     private static bool IsByte(AeroType? t) => IsKind(t, AeroType.Byte); // Byte is unsigned
-    private static bool IsNumeric(AeroType? t) => IsKind(t, AeroType.Int) || IsFloat(t) || IsByte(t);
+    private static bool IsWhole(AeroType? t) => IsKind(t, AeroType.Int) || IsLong(t) || IsByte(t);
+    private static bool IsNumeric(AeroType? t) => IsWhole(t) || IsFloating(t);
 
     private bool TryLowerBinary(BinaryExpressionNode b, out LLVMValueRef value)
     {
@@ -67,9 +71,9 @@ public sealed partial class FunctionEmitter
                 return true;
 
             case Operator.BitwiseAnd or Operator.BitwiseOr or Operator.BitwiseXor or Operator.LeftShift or Operator.RightShift:
-                if (!IsKind(leftType, AeroType.Int) && !IsByte(leftType))
+                if (!IsWhole(leftType))
                 {
-                    Fail($"'{op.AsString()}' is only lowered for Int and Byte", span);
+                    Fail($"'{op.AsString()}' is only lowered for Int, Long and Byte", span);
                     return false;
                 }
 
@@ -89,13 +93,27 @@ public sealed partial class FunctionEmitter
         }
     }
 
-    // Int and Byte widen to Float when a Float is involved; Int / Int is true division and also ends up as Float
-    private LLVMValueRef ToFloat(LLVMValueRef value, AeroType type)
+    // The floating type two numeric operands meet in: Double when either is a Double or a Long (Float can't hold a Long), else Float
+    private LLVMTypeRef FloatingTypeOf(AeroType left, AeroType right)
+        => IsDouble(left) || IsDouble(right) || IsLong(left) || IsLong(right) ? _context.DoubleType : _context.FloatType;
+
+    // Whole numbers and Float widen to the target floating type; Int / Int is true division and also ends up as Float
+    private LLVMValueRef ToFloating(LLVMValueRef value, AeroType type, LLVMTypeRef target)
     {
-        if (IsFloat(type)) return value;
+        if (IsFloating(type))
+            return value.TypeOf.Kind == target.Kind ? value : _builder.BuildFPExt(value, target, "tof");
         return IsByte(type)
-            ? _builder.BuildUIToFP(value, _context.FloatType, "tof")
-            : _builder.BuildSIToFP(value, _context.FloatType, "tof");
+            ? _builder.BuildUIToFP(value, target, "tof")
+            : _builder.BuildSIToFP(value, target, "tof");
+    }
+
+    // Int and Byte widen to Long when a Long is involved
+    private LLVMValueRef ToWhole(LLVMValueRef value, AeroType type, bool wide)
+    {
+        if (!wide || IsLong(type)) return value;
+        return IsByte(type)
+            ? _builder.BuildZExt(value, _context.Int64Type, "wide")
+            : _builder.BuildSExt(value, _context.Int64Type, "wide");
     }
 
     private bool TryEmitArithmetic(Operator op, LLVMValueRef left, AeroType leftType, LLVMValueRef right, AeroType rightType,
@@ -110,12 +128,14 @@ public sealed partial class FunctionEmitter
         }
 
         var bothInt = IsKind(leftType, AeroType.Int) && IsKind(rightType, AeroType.Int);
-        var asFloat = IsFloat(leftType) || IsFloat(rightType) || (op == Operator.Divide && bothInt);
+        var longDivide = op == Operator.Divide && (IsLong(leftType) || IsLong(rightType)) && !IsByte(leftType) && !IsByte(rightType);
+        var asFloat = IsFloating(leftType) || IsFloating(rightType) || (op == Operator.Divide && bothInt) || longDivide;
 
         if (asFloat)
         {
-            var l = ToFloat(left, leftType);
-            var r = ToFloat(right, rightType);
+            var floating = FloatingTypeOf(leftType, rightType);
+            var l = ToFloating(left, leftType, floating);
+            var r = ToFloating(right, rightType, floating);
             value = op switch
             {
                 Operator.Add => _builder.BuildFAdd(l, r, "add"),
@@ -127,14 +147,18 @@ public sealed partial class FunctionEmitter
             return true;
         }
 
-        // Mixed Int and Byte has no promotion in the checker, so both sides share one type here
-        var unsigned = IsByte(leftType);
+        // Mixed Int and Byte has no promotion in the checker, so apart from a Long both sides share one type here
+        var wide = IsLong(leftType) || IsLong(rightType);
+        left = ToWhole(left, leftType, wide);
+        right = ToWhole(right, rightType, wide);
+
+        var unsigned = IsByte(leftType) && IsByte(rightType);
         value = op switch
         {
             Operator.Add => _builder.BuildAdd(left, right, "add"),
             Operator.Subtract => _builder.BuildSub(left, right, "sub"),
             Operator.Multiply => _builder.BuildMul(left, right, "mul"),
-            Operator.Divide => _builder.BuildUDiv(left, right, "div"), // only Byte / Byte gets here
+            Operator.Divide => unsigned ? _builder.BuildUDiv(left, right, "div") : _builder.BuildSDiv(left, right, "div"), // Long / Byte gets here
             _ => unsigned ? _builder.BuildURem(left, right, "rem") : _builder.BuildSRem(left, right, "rem"),
         };
         return true;
@@ -162,7 +186,7 @@ public sealed partial class FunctionEmitter
 
         LLVMValueRef test;
 
-        if (IsFloat(leftType) || IsFloat(rightType))
+        if (IsFloating(leftType) || IsFloating(rightType))
         {
             if (!IsNumeric(leftType) || !IsNumeric(rightType))
             {
@@ -179,22 +203,27 @@ public sealed partial class FunctionEmitter
                 Operator.LessThanEqual => LLVMRealPredicate.LLVMRealOLE,
                 _ => LLVMRealPredicate.LLVMRealOGE,
             };
-            test = _builder.BuildFCmp(predicate, ToFloat(left, leftType), ToFloat(right, rightType), "cmp");
+            var floating = FloatingTypeOf(leftType, rightType);
+            test = _builder.BuildFCmp(predicate, ToFloating(left, leftType, floating), ToFloating(right, rightType, floating), "cmp");
         }
         else
         {
             var isEquality = op is Operator.Equality or Operator.Inequality;
-            var integral = IsKind(leftType, AeroType.Int) || IsByte(leftType);
+            var integral = IsWhole(leftType) && IsWhole(rightType);
             var isEnum = leftType is ScalarType && _types.SymbolOf(leftType, _scope) is EnumSymbol; // an enum value is its ordinal
             var comparable = integral || (isEquality && (IsKind(leftType, AeroType.Bool) || IsKind(leftType, AeroType.Char) || isEnum));
 
-            if (!comparable || leftType.Name != rightType.Name)
+            if (!comparable || (leftType.Name != rightType.Name && !integral))
             {
                 Fail($"'{op.AsString()}' is not lowered for '{leftType}' and '{rightType}' yet", span);
                 return false;
             }
 
-            var unsigned = IsByte(leftType);
+            var wide = IsLong(leftType) || IsLong(rightType);
+            left = ToWhole(left, leftType, wide);
+            right = ToWhole(right, rightType, wide);
+
+            var unsigned = IsByte(leftType) && IsByte(rightType);
             var predicate = op switch
             {
                 Operator.Equality => LLVMIntPredicate.LLVMIntEQ,
@@ -233,7 +262,7 @@ public sealed partial class FunctionEmitter
             case Operator.Add when IsNumeric(type):
                 value = operand;
                 return true;
-            case Operator.Subtract when IsFloat(type):
+            case Operator.Subtract when IsFloating(type):
                 value = _builder.BuildFNeg(operand, "neg");
                 return true;
             case Operator.Subtract when IsNumeric(type):
@@ -242,7 +271,7 @@ public sealed partial class FunctionEmitter
             case Operator.LogicalNot or Operator.Not when IsKind(type, AeroType.Bool):
                 value = _builder.BuildXor(operand, LLVMValueRef.CreateConstInt(_context.Int8Type, 1), "not");
                 return true;
-            case Operator.Tilde when IsKind(type, AeroType.Int) || IsByte(type):
+            case Operator.Tilde when IsWhole(type):
                 value = _builder.BuildNot(operand, "inv");
                 return true;
             default:
@@ -270,9 +299,9 @@ public sealed partial class FunctionEmitter
         var increment = u.Operator == Operator.Increment;
         LLVMValueRef updated;
 
-        if (IsFloat(type))
+        if (IsFloating(type))
         {
-            var one = LLVMValueRef.CreateConstReal(_context.FloatType, 1.0);
+            var one = LLVMValueRef.CreateConstReal(slot.Type, 1.0);
             updated = increment ? _builder.BuildFAdd(old, one, "inc") : _builder.BuildFSub(old, one, "dec");
         }
         else

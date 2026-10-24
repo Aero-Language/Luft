@@ -215,8 +215,27 @@ public sealed class Tokenizer : SafeIterator<char>
         }
 
         TokenType type = isFloat ? TokenType.FloatLiteral : TokenType.IntLiteral;
+        var end = Index;
+
+        // Suffixes: L makes an integer a Long, d makes any number a Double (not on hex/binary, where d is a digit)
+        if (Index < Items.Length)
+        {
+            var suffix = Items[Index];
+            var endsWord = Index + 1 >= Items.Length || !(char.IsAsciiLetterOrDigit(Items[Index + 1]) || Items[Index + 1] == '_');
+            if (endsWord && suffix == 'L' && !isFloat)
+            {
+                Pop();
+                type = TokenType.LongLiteral;
+            }
+            else if (endsWord && suffix is 'd' or 'D' && !isHex && !isBin)
+            {
+                Pop();
+                type = TokenType.DoubleLiteral;
+            }
+        }
+
         var span = new SourceSpan(FilePath, initialLoc, new TextLocation(Line, Column));
-        Tokens.Add(new Token(type, PeekRange(start, Index).ToString(), span));
+        Tokens.Add(new Token(type, PeekRange(start, end).ToString(), span));
     }
     void PopInterpolatedString()
     {

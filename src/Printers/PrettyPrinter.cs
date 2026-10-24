@@ -426,7 +426,9 @@ public class PrettyPrinter(int indentAmount = 4, bool isLib = false) : PrinterBa
         return node.LiteralType switch
         {
             TokenType.IntLiteral when node.Value is int i => i.ToString(),
+            TokenType.LongLiteral when node.Value is long l => l + "L",
             TokenType.FloatLiteral when node.Value is float f => f.ToString(CultureInfo.CurrentCulture),
+            TokenType.DoubleLiteral when node.Value is double d => d.ToString(CultureInfo.InvariantCulture) + "d",
             TokenType.CharLiteral when node.Value is char c => $"'{c}'",
             TokenType.StringLiteral when node.Value is string s => $"\"{s}\"",
             TokenType.BooleanLiteral when node.Value is bool b => b ? "true" : "false",

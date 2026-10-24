@@ -222,6 +222,7 @@ public sealed class Analyzer(Snapshot snap)
 
     static bool IsWord(Token t)
         => t.Type is not (TokenType.StringLiteral or TokenType.CharLiteral or TokenType.IntLiteral or TokenType.FloatLiteral
+               or TokenType.LongLiteral or TokenType.DoubleLiteral
                or TokenType.InterpolationStart or TokenType.InterpolationEnd)
            && t.Value.Length > 0 && (char.IsLetter(t.Value[0]) || t.Value[0] == '_');
 
@@ -465,6 +466,8 @@ public sealed class Analyzer(Snapshot snap)
     {
         TokenType.IntLiteral => "Int",
         TokenType.FloatLiteral => "Float",
+        TokenType.LongLiteral => "Long",
+        TokenType.DoubleLiteral => "Double",
         TokenType.CharLiteral => "Char",
         TokenType.StringLiteral => "String",
         TokenType.BooleanLiteral => "Bool",

@@ -24,13 +24,15 @@ public sealed partial class FunctionEmitter
     }
 
     private static bool IsIntegral(AeroType t)
-        => IsKind(t, AeroType.Int) || IsByte(t) || IsKind(t, AeroType.Char) || IsKind(t, AeroType.Bool);
+        => IsKind(t, AeroType.Int) || IsLong(t) || IsByte(t) || IsKind(t, AeroType.Char) || IsKind(t, AeroType.Bool);
+
+    private static bool IsSignedWhole(AeroType t) => IsKind(t, AeroType.Int) || IsLong(t);
 
     private bool TryConvert(LLVMValueRef operand, AeroType source, AeroType target, SourceSpan span, out LLVMValueRef value)
     {
         value = default;
 
-        var primitive = (IsIntegral(source) || IsFloat(source)) && (IsIntegral(target) || IsFloat(target));
+        var primitive = (IsIntegral(source) || IsFloating(source)) && (IsIntegral(target) || IsFloating(target));
 
         if (source.Name == target.Name && !source.IsNullable && !target.IsNullable)
         {
@@ -48,25 +50,31 @@ public sealed partial class FunctionEmitter
 
         if (!_types.TryLower(target, _scope, span, out var to)) return false;
 
-        if (IsFloat(source))
+        if (IsFloating(source) && IsFloating(target))
         {
-            if (IsKind(target, AeroType.Bool))
-            {
-                Fail("A Float cannot be cast to Bool", span);
-                return false;
-            }
-            value = IsKind(target, AeroType.Int) ? _builder.BuildFPToSI(operand, to, "cast") : _builder.BuildFPToUI(operand, to, "cast");
+            value = IsDouble(source) ? _builder.BuildFPTrunc(operand, to, "cast") : _builder.BuildFPExt(operand, to, "cast");
             return true;
         }
 
-        if (IsFloat(target))
+        if (IsFloating(source))
+        {
+            if (IsKind(target, AeroType.Bool))
+            {
+                Fail($"A {source.Name} cannot be cast to Bool", span);
+                return false;
+            }
+            value = IsSignedWhole(target) ? _builder.BuildFPToSI(operand, to, "cast") : _builder.BuildFPToUI(operand, to, "cast");
+            return true;
+        }
+
+        if (IsFloating(target))
         {
             if (IsKind(source, AeroType.Bool))
             {
-                Fail("A Bool cannot be cast to Float", span);
+                Fail($"A Bool cannot be cast to {target.Name}", span);
                 return false;
             }
-            value = IsKind(source, AeroType.Int) ? _builder.BuildSIToFP(operand, to, "cast") : _builder.BuildUIToFP(operand, to, "cast");
+            value = IsSignedWhole(source) ? _builder.BuildSIToFP(operand, to, "cast") : _builder.BuildUIToFP(operand, to, "cast");
             return true;
         }
 
@@ -79,7 +87,7 @@ public sealed partial class FunctionEmitter
 
         var from = operand.TypeOf.IntWidth;
         var width = to.IntWidth;
-        value = from < width ? _builder.BuildZExt(operand, to, "cast")
+        value = from < width ? (IsSignedWhole(source) ? _builder.BuildSExt(operand, to, "cast") : _builder.BuildZExt(operand, to, "cast"))
             : from > width ? _builder.BuildTrunc(operand, to, "cast")
             : operand;
         return true;

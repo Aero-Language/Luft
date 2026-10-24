@@ -10,7 +10,7 @@ public class BodyResolver : AeroThrower
 {
     protected override CompilerStage Stage => CompilerStage.BodyResolver;
     
-    private static readonly HashSet<AeroType> NumericTypes = [AeroType.Int, AeroType.Float, AeroType.Byte];
+    private static readonly HashSet<AeroType> NumericTypes = [AeroType.Int, AeroType.Long, AeroType.Float, AeroType.Double, AeroType.Byte];
 
     private TypeTable Table { get; set; } = null!;
     private TypedInfo Typed => Table.Typed;
@@ -761,7 +761,9 @@ public class BodyResolver : AeroThrower
         return expr.LiteralType switch
         {
             TokenType.IntLiteral => AeroType.Int,
+            TokenType.LongLiteral => AeroType.Long,
             TokenType.FloatLiteral => AeroType.Float,
+            TokenType.DoubleLiteral => AeroType.Double,
             TokenType.CharLiteral => AeroType.Char,
             TokenType.StringLiteral => AeroType.String,
             TokenType.BooleanLiteral => AeroType.Bool,
@@ -1304,11 +1306,12 @@ public class BodyResolver : AeroThrower
         return null;
     }
 
-    private static readonly HashSet<AeroType> IntegralTypes = [AeroType.Int, AeroType.Byte];
+    private static readonly HashSet<AeroType> IntegralTypes = [AeroType.Int, AeroType.Long, AeroType.Byte];
 
     // Built-in rules for the primitive types. Only 'Divide' gets special treatment: Int / Int
-    // is true division and widens to Float (10 / 3 is 3.333..., not 3) — every other arithmetic
-    // op keeps the operands' shared type, widening only when a Float is already involved.
+    // is true division and widens to Float (10 / 3 is 3.333..., not 3), and Long / Long, Long / Int
+    // widen to Double — every other arithmetic op keeps the operands' shared type, widening only
+    // when a Float or Double is already involved.
     private AeroType? TryPrimitiveOperator(Operator op, AeroType left, AeroType right) => op switch
     {
         Operator.LogicalAnd or Operator.LogicalOr or Operator.And or Operator.Or
@@ -1327,20 +1330,28 @@ public class BodyResolver : AeroThrower
         Operator.Divide when left == AeroType.Int && right == AeroType.Int
             => AeroType.Float,
 
+        Operator.Divide when (left == AeroType.Long && (right == AeroType.Long || right == AeroType.Int))
+            || (left == AeroType.Int && right == AeroType.Long)
+            => AeroType.Double,
+
         Operator.Add or Operator.Subtract or Operator.Multiply or Operator.Modulo or Operator.Divide
             => Promote(left, right),
 
         _ => null
     };
 
-    // Numeric promotion for primitives: identical types pass through unchanged; mixing an Int
-    // or Byte with a Float widens to Float. Int/Byte mixed with each other has no defined
-    // widening yet (comes back null, i.e. "no primitive rule matches").
+    // Numeric promotion for primitives: identical types pass through unchanged; a Double wins over
+    // everything, a Float over Int and Byte (but Float with Long gives Double, Float can't hold a
+    // Long), and a Long over Int and Byte. Int/Byte mixed with each other has no defined widening
+    // yet (comes back null, i.e. "no primitive rule matches").
     private static AeroType? Promote(AeroType left, AeroType right)
     {
         if (!NumericTypes.Contains(left) || !NumericTypes.Contains(right)) return null;
         if (left == right) return left;
-        if (left == AeroType.Float || right == AeroType.Float) return AeroType.Float;
+        if (left == AeroType.Double || right == AeroType.Double) return AeroType.Double;
+        if (left == AeroType.Float || right == AeroType.Float)
+            return left == AeroType.Long || right == AeroType.Long ? AeroType.Double : AeroType.Float;
+        if (left == AeroType.Long || right == AeroType.Long) return AeroType.Long;
         return null;
     }
 
@@ -1377,7 +1388,7 @@ public class BodyResolver : AeroThrower
             Operator.LogicalNot
                 => operand == AeroType.Bool ? AeroType.Bool : Fail("'!' requires a 'Bool' operand", expr.Span),
             Operator.Tilde
-                => operand == AeroType.Int || operand == AeroType.Byte ? operand : Fail("'~' requires an integral operand", expr.Span),
+                => IntegralTypes.Contains(operand) ? operand : Fail("'~' requires an integral operand", expr.Span),
             _ => operand
         };
     }

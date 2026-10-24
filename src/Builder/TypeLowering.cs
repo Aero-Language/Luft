@@ -82,6 +82,8 @@ public sealed class TypeLowering : AeroThrower
 
         _primitives[AeroType.Int.Name] = i32;
         _primitives[AeroType.Float.Name] = context.FloatType;
+        _primitives[AeroType.Long.Name] = context.Int64Type;
+        _primitives[AeroType.Double.Name] = context.DoubleType;
         _primitives[AeroType.Bool.Name] = context.Int8Type; // i8 so it stays addressable
         _primitives[AeroType.Byte.Name] = context.Int8Type;
         _primitives[AeroType.Char.Name] = context.Int16Type; // UTF-16 code unit

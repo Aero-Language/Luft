@@ -59,6 +59,35 @@ void aero_str_from_float(AeroString *out, float value)
     from_ascii(out, text, n);
 }
 
+void aero_str_from_long(AeroString *out, int64_t value)
+{
+    char text[24];
+    int n = snprintf(text, sizeof text, "%lld", (long long)value);
+    from_ascii(out, text, n);
+}
+
+void aero_str_from_double(AeroString *out, double value)
+{
+    char text[48];
+    int n = 0;
+
+    // Shortest text that reads back as the same Double
+    for (int precision = 1; precision <= 17; precision++)
+    {
+        n = snprintf(text, sizeof text, "%.*g", precision, value);
+        if (strtod(text, NULL) == value || value != value) break;
+    }
+
+    // 3 prints as 3.0, so a Double never looks like a Long
+    if (strpbrk(text, ".eEnN") == NULL && n < (int)sizeof text - 3)
+    {
+        text[n++] = '.';
+        text[n++] = '0';
+        text[n] = '\0';
+    }
+    from_ascii(out, text, n);
+}
+
 void aero_str_from_bool(AeroString *out, uint8_t value)
 {
     if (value) from_ascii(out, "true", 4);

@@ -75,8 +75,14 @@ public sealed partial class FunctionEmitter
             case (TokenType.IntLiteral, int i):
                 value = LLVMValueRef.CreateConstInt(_context.Int32Type, (ulong)(long)i, true);
                 return true;
+            case (TokenType.LongLiteral, long l):
+                value = LLVMValueRef.CreateConstInt(_context.Int64Type, (ulong)l, true);
+                return true;
             case (TokenType.FloatLiteral, float f):
                 value = LLVMValueRef.CreateConstReal(_context.FloatType, f);
+                return true;
+            case (TokenType.DoubleLiteral, double d):
+                value = LLVMValueRef.CreateConstReal(_context.DoubleType, d);
                 return true;
             case (TokenType.BooleanLiteral, bool b):
                 value = LLVMValueRef.CreateConstInt(_context.Int8Type, b ? 1UL : 0UL);

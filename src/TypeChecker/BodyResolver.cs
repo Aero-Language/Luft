@@ -453,19 +453,25 @@ public class BodyResolver : AeroThrower
     }
 
     // A constructed generic type has <auto> arguments (the call carries none), so those match anything
-    private bool IsAssignable(AeroType from, AeroType to)
+    // 'widen' lets an Int fit a Long and a Float a Double; it is off inside arrays and lambda shapes, where the values would need converting in place
+    private bool IsAssignable(AeroType from, AeroType to, bool widen = true)
     {
         if (from == to || from.IsAuto || to.IsAuto) return true;
         if (from == AeroType.Null) return to.IsNullable; // null only fits nullable types
-        if (from is ArrayType fa && to is ArrayType ta) return IsAssignable(fa.ElementType, ta.ElementType);
+
+        if (widen && from is ScalarType { IsNullable: false } && to is ScalarType
+            && ((from.Name == AeroType.Int.Name && to.Name == AeroType.Long.Name) || (from.Name == AeroType.Float.Name && to.Name == AeroType.Double.Name)))
+            return true;
+
+        if (from is ArrayType fa && to is ArrayType ta) return IsAssignable(fa.ElementType, ta.ElementType, false);
 
         // Parameter names don't matter, so a function reference fits any lambda type with the same shape
         if (from is LambdaType fl && to is LambdaType tl)
         {
             return fl.IsNullable == tl.IsNullable
                 && fl.Parameters.Count == tl.Parameters.Count
-                && fl.Parameters.Zip(tl.Parameters).All(p => IsAssignable(p.First.Type, p.Second.Type))
-                && IsAssignable(fl.ReturnType, tl.ReturnType);
+                && fl.Parameters.Zip(tl.Parameters).All(p => IsAssignable(p.First.Type, p.Second.Type, false))
+                && IsAssignable(fl.ReturnType, tl.ReturnType, false);
         }
 
         if (from is GenericType f && to is GenericType t

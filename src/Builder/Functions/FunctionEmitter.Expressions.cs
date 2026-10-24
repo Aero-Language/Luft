@@ -442,11 +442,25 @@ public sealed partial class FunctionEmitter
         return thunk;
     }
 
-    // Wraps into a nullable where the target needs it, everything else already matches
+    // Widens an Int to a Long and a Float to a Double, wraps into a nullable where the target needs it, everything else already matches
     private LLVMValueRef Coerce(LLVMValueRef value, AeroType? from, AeroType to, SourceSpan span)
     {
         if (from is not null) from = Subst(from);
         to = Subst(to);
+
+        if (from is not null && value.Handle != IntPtr.Zero && to is ScalarType)
+        {
+            if (IsKind(from, AeroType.Int) && to.Name == AeroType.Long.Name)
+            {
+                value = _builder.BuildSExt(value, _context.Int64Type, "wide");
+                from = AeroType.Long;
+            }
+            else if (IsKind(from, AeroType.Float) && to.Name == AeroType.Double.Name)
+            {
+                value = _builder.BuildFPExt(value, _context.DoubleType, "wide");
+                from = AeroType.Double;
+            }
+        }
         if (from is not null && value.Handle != IntPtr.Zero && TryConvertToTrait(value, from, to, span, out var asTrait)) return asTrait;
 
         if (from is null || value.Handle == IntPtr.Zero || !to.IsNullable || to.IsRef) return value;

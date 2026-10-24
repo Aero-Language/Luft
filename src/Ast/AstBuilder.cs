@@ -1137,14 +1137,14 @@ public sealed class AstBuilder : SafeIterator<Token>
                 obj = l;
                 break;
             case TokenType.FloatLiteral:
-                if (!float.TryParse(token.Value, out var f))
+                if (!TryParseFloating(token.Value, out var fd))
                 {
                     Error("Float could not be parsed", startSpan);
                 }
-                obj = f;
+                obj = (float)fd;
                 break;
             case TokenType.DoubleLiteral:
-                if (!double.TryParse(token.Value, System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out var d))
+                if (!TryParseFloating(token.Value, out var d))
                 {
                     Error("Double could not be parsed", startSpan);
                 }
@@ -1938,6 +1938,17 @@ public sealed class AstBuilder : SafeIterator<Token>
         }
     }
     
+    // A decimal number, or a binary one (0b101d) read as a whole number first
+    bool TryParseFloating(string text, out double result)
+    {
+        if (text.StartsWith("0b", StringComparison.OrdinalIgnoreCase) && TryParseLongLiteral(text, out var whole))
+        {
+            result = whole;
+            return true;
+        }
+        return double.TryParse(text.Replace("_", ""), System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out result);
+    }
+
     bool TryParseLongLiteral(string text, out long result)
     {
         result = 0;

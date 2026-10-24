@@ -217,7 +217,7 @@ public sealed class Tokenizer : SafeIterator<char>
         TokenType type = isFloat ? TokenType.FloatLiteral : TokenType.IntLiteral;
         var end = Index;
 
-        // Suffixes: L makes an integer a Long, d makes any number a Double (not on hex/binary, where d is a digit)
+        // Suffixes: L makes an integer a Long, d a Double and f a Float. In hex d and f are digits, so there only L works
         if (Index < Items.Length)
         {
             var suffix = Items[Index];
@@ -227,10 +227,15 @@ public sealed class Tokenizer : SafeIterator<char>
                 Pop();
                 type = TokenType.LongLiteral;
             }
-            else if (endsWord && suffix is 'd' or 'D' && !isHex && !isBin)
+            else if (endsWord && suffix is 'd' or 'D' && !isHex)
             {
                 Pop();
                 type = TokenType.DoubleLiteral;
+            }
+            else if (endsWord && suffix is 'f' or 'F' && !isHex)
+            {
+                Pop();
+                type = TokenType.FloatLiteral;
             }
         }
 

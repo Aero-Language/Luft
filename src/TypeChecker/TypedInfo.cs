@@ -16,6 +16,9 @@ public sealed record TypeBinding(TypeSymbol Type) : Binding;
 public sealed record ModuleBinding(string Path) : Binding;
 public sealed record OperatorBinding(OperatorSymbol Operator) : Binding;
 
+// The built-in read only Length of an array
+public sealed record ArrayLengthBinding : Binding;
+
 // TypeArguments binds the function's own generics, ReceiverTypeArguments the generics of the type it was accessed on
 public sealed record FunctionBinding(
     FunctionSymbol Function,

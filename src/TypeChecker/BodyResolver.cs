@@ -554,6 +554,12 @@ public class BodyResolver : AeroThrower
         var targetType = ResolveExpression(a.Target, scope, bScope);
         var valueType = ResolveExpecting(a.Value, targetType, scope, bScope);
 
+        if (Typed.BindingOf(StripScopes(a.Target)) is ArrayLengthBinding)
+        {
+            Error("The 'Length' of an array is read only", a.Span);
+            return;
+        }
+
         if (StripScopes(a.Target) is IdentifierExpressionNode && Typed.BindingOf(StripScopes(a.Target)) is LocalBinding { Variable: var assigned } && IsCaptured(assigned, bScope))
             Error($"'{assigned.Name}' is captured by a lambda, which works on a copy, so it cannot be assigned inside it", a.Span);
 
@@ -1607,6 +1613,9 @@ public class BodyResolver : AeroThrower
 
             case ValueRes v:
             {
+                if (v.Type is ArrayType { IsNullable: false } && name == "Length")
+                    return new ValueRes(AeroType.Int, new ArrayLengthBinding());
+
                 var file = expr.Span.FilePath;
                 var symbol = FindType(v.Type, scope, file);
                 if (symbol is null || FindMember(symbol, name, []) is null)

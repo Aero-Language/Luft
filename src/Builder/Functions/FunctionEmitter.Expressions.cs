@@ -27,6 +27,10 @@ public sealed partial class FunctionEmitter
                 return TryLowerField(m, out value);
             case MemberAccessExpressionNode m when _typed.BindingOf(m) is PropertyBinding:
                 return TryLowerProperty(m, out value);
+            case MemberAccessExpressionNode m when _typed.BindingOf(m) is ArrayLengthBinding:
+                if (!TryLowerValue(m.Target, out var array)) return false;
+                value = _builder.BuildExtractValue(array, 1, "length");
+                return true;
             case MemberAccessExpressionNode m when _typed.BindingOf(m) is EnumMemberBinding { Enum: var enumeration, Name: var memberName }:
                 return TryLowerEnumMember(m, enumeration, memberName, out value);
             case MemberAccessExpressionNode m when _typed.BindingOf(m) is EnumParamBinding:

@@ -40,6 +40,31 @@ public sealed partial class FunctionEmitter
         return true;
     }
 
+    // Reading a property of a trait value calls the getter in its vtable, self is the data pointer
+    private bool TryLowerTraitProperty(ExpressionNode holder, TraitSymbol trait, PropertySymbol property, SourceSpan span, out LLVMValueRef value)
+    {
+        value = default;
+
+        if (!_members.TraitPropertySlots.TryGetValue((trait, property), out var slot))
+        {
+            Fail($"'{property.Name}' is not a property of the trait '{trait.Name}'", span);
+            return false;
+        }
+        if (!TryLowerValue(holder, out var traitValue)) return false;
+
+        var propertyType = TypeSubstitution.Apply(property.Type, _types.InfoOf(trait)?.Arguments);
+        if (_types.LowerFunction(propertyType, Array.Empty<AeroType>(), trait.Scope, span) is not { } lowered) return false;
+        var type = LLVMTypeRef.CreateFunction(lowered.ReturnType, [_types.Ptr]);
+
+        var data = _builder.BuildExtractValue(traitValue, 0, "data");
+        var table = _builder.BuildExtractValue(traitValue, 1, "vtable");
+        var entry = _builder.BuildGEP2(_types.Ptr, table, new[] { LLVMValueRef.CreateConstInt(_context.Int32Type, (ulong)slot) }, "slot");
+        var callee = _builder.BuildLoad2(_types.Ptr, entry, "getter");
+
+        value = _builder.BuildCall2(type, callee, [data], "get");
+        return true;
+    }
+
     // A call on a trait value goes through its vtable: self is the data pointer
     private bool TryLowerTraitCall(CallExpressionNode call, FunctionSymbol function, out bool handled, out LLVMValueRef value)
     {

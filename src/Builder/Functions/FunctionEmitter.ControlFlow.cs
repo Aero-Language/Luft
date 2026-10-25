@@ -314,6 +314,13 @@ public sealed partial class FunctionEmitter
 
     private void LowerFor(ForExpressionNode f)
     {
+        // An iterable was rewritten by the checker into plain statements
+        if (_typed.Desugared.TryGetValue(f, out var statements))
+        {
+            LowerStatements(statements);
+            return;
+        }
+
         var collectionType = TypeOf(f.Collection);
 
         if (_typed.BindingOf(f.Item) is not LocalBinding { Variable: var item })

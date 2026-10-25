@@ -119,6 +119,10 @@ public sealed partial class FunctionEmitter
             return false;
         }
 
+        if (expression is MemberAccessExpressionNode { Target: var holder } && TypeOf(holder) is { } holderType
+            && _types.SymbolOf(holderType, _scope) is TraitSymbol holderTrait)
+            return TryLowerTraitProperty(holder, holderTrait, property, expression.Span, out value);
+
         if (!TryPropertyReceiver(expression, property, false, out var pointer, out var owner)) return false;
 
         if (property.Getter?.Body is not null || IsExternalProperty(property))

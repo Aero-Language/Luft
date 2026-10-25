@@ -53,6 +53,10 @@ public sealed class MemberTable
     public Dictionary<TraitSymbol, List<FunctionSymbol>> TraitMethods { get; } = new();
     public Dictionary<(TraitSymbol Trait, FunctionSymbol Method), int> TraitSlots { get; } = new();
 
+    // The property getters a vtable lists after the methods, and each one's position in it
+    public Dictionary<TraitSymbol, List<PropertySymbol>> TraitProperties { get; } = new();
+    public Dictionary<(TraitSymbol Trait, PropertySymbol Property), int> TraitPropertySlots { get; } = new();
+
     // The vtable a class, struct or record hands out when it is used as a trait
     public Dictionary<(TypeSymbol Type, TraitSymbol Trait), LLVMValueRef> TraitVTables { get; } = new();
 }

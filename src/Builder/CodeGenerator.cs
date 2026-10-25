@@ -700,6 +700,19 @@ public sealed class CodeGenerator : AeroThrower, IDisposable
             .OrderBy(f => f.Span.Start));
     }
 
+    // The property getters of a trait, inherited traits first like the methods
+    private void CollectTraitProperties(TraitSymbol trait, List<PropertySymbol> properties, HashSet<TraitSymbol> seen)
+    {
+        if (!seen.Add(trait)) return;
+
+        foreach (var listed in ListedTypesOf(trait))
+            if (_types.SymbolOf(TypeSubstitution.Apply(listed, _types.InfoOf(trait)?.Arguments), trait.Scope) is TraitSymbol baseTrait && baseTrait.GenericParameters.Count == 0) CollectTraitProperties(baseTrait, properties, seen);
+
+        properties.AddRange(trait.Scope.Properties.Values.SelectMany(l => l)
+            .Where(p => !p.Declaration.MemberMods.HasFlag(MemberMod.Static))
+            .OrderBy(p => p.Span.Start));
+    }
+
     // Every non generic trait a type implements, through its base types and the traits' own bases
     private List<TraitSymbol> TraitsOf(TypeSymbol type)
     {
@@ -745,6 +758,12 @@ public sealed class CodeGenerator : AeroThrower, IDisposable
 
         _members.TraitMethods[trait] = methods;
         for (var i = 0; i < methods.Count; i++) _members.TraitSlots[(trait, methods[i])] = i;
+
+        var properties = new List<PropertySymbol>();
+        CollectTraitProperties(trait, properties, new HashSet<TraitSymbol>());
+
+        _members.TraitProperties[trait] = properties;
+        for (var i = 0; i < properties.Count; i++) _members.TraitPropertySlots[(trait, properties[i])] = methods.Count + i;
     }
 
     private void DeclareTraitTables(TypeSymbol type, string path, ModuleSymbol module)
@@ -754,7 +773,8 @@ public sealed class CodeGenerator : AeroThrower, IDisposable
         {
             if (!_members.TraitMethods.TryGetValue(trait, out var methods)) continue;
 
-            var table = Module.AddGlobal(LLVMTypeRef.CreateArray(_types.Ptr, (uint)methods.Count), $"{QualifiedName(module, path)}.<trait:{trait.Name}>");
+            var properties = _members.TraitProperties[trait];
+            var table = Module.AddGlobal(LLVMTypeRef.CreateArray(_types.Ptr, (uint)(methods.Count + properties.Count)), $"{QualifiedName(module, path)}.<trait:{trait.Name}>");
             table.Linkage = LLVMLinkage.LLVMInternalLinkage;
             table.IsGlobalConstant = true;
 
@@ -768,6 +788,8 @@ public sealed class CodeGenerator : AeroThrower, IDisposable
             var entries = new List<LLVMValueRef>();
             foreach (var method in _members.TraitMethods[trait])
                 entries.Add(EntryFor(type, trait, method, path, module, table));
+            foreach (var property in _members.TraitProperties[trait])
+                entries.Add(EntryForProperty(type, trait, property, path, module));
 
             table.Initializer = LLVMValueRef.CreateConstArray(_types.Ptr, entries.ToArray());
         }
@@ -792,6 +814,44 @@ public sealed class CodeGenerator : AeroThrower, IDisposable
         }
 
         return DefaultThunk(type, trait, fallback, table, path, module);
+    }
+
+    // The type's own property with the same name, searched up its base types; its getter, or a thunk reading the backing value of an automatic one
+    private LLVMValueRef EntryForProperty(TypeSymbol type, TraitSymbol trait, PropertySymbol property, string path, ModuleSymbol module)
+    {
+        for (var link = type; link is not null; link = _types.BaseOf(link))
+        {
+            var found = link.Scope.Properties.Values.SelectMany(l => l)
+                .FirstOrDefault(p => p.Name == property.Name && !p.Declaration.MemberMods.HasFlag(MemberMod.Static));
+            if (found is null) continue;
+
+            if (_members.Accessors.TryGetValue(new AccessorKey(found, false), out var getter)) return getter.Value;
+            if (BackingGetter(link, trait, found, path, module) is { } thunk) return thunk;
+            break;
+        }
+
+        Error($"'{type.Name}' does not implement the property '{property.Name}' of the trait '{trait.Name}'", type.Span);
+        return LLVMValueRef.CreateConstPointerNull(_types.Ptr);
+    }
+
+    private LLVMValueRef? BackingGetter(TypeSymbol owner, TraitSymbol trait, PropertySymbol property, string path, ModuleSymbol module)
+    {
+        var propertyType = TypeSubstitution.Apply(property.Type, _types.InfoOf(owner)?.Arguments);
+        if (_types.LowerFunction(propertyType, Array.Empty<AeroType>(), owner.Scope, property.Span) is not { } lowered) return null;
+
+        var layout = _types.LayoutOf(owner, property.Span);
+        if (layout?.Find($"<backing>{property.Name}") is not { } slot) return null;
+
+        var type = LLVMTypeRef.CreateFunction(lowered.ReturnType, [_types.Ptr]);
+        var thunk = Module.AddFunction($"{QualifiedName(module, path)}.<getter:{trait.Name}.{property.Name}>", type);
+        thunk.Linkage = LLVMLinkage.LLVMInternalLinkage;
+
+        using var b = _context.CreateBuilder();
+        b.PositionAtEnd(_context.AppendBasicBlock(thunk, "entry"));
+
+        var address = b.BuildStructGEP2(layout.StructType, thunk.GetParam(0), (uint)slot.Index, property.Name);
+        b.BuildRet(b.BuildLoad2(layout.Elements[slot.Index], address, "value"));
+        return thunk;
     }
 
     // The slot of a default method receives the data pointer, so the thunk wraps it into the trait value the default body expects

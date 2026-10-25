@@ -668,6 +668,9 @@ public class BodyResolver : AeroThrower
     {
         var cType = ResolveExpression(expr.Collection, scope, bScope);
 
+        if (cType != AeroType.Error && cType != AeroType.Range && cType is not ArrayType)
+            return ResolveIterableFor(expr, cType, scope, bScope);
+
         var loopScope = new BodyScope(bScope); // the loop variable lives only inside the loop
         var itemType = expr.Item.Type.IsAuto ? ElementTypeOf(cType, expr.Collection.Span) : expr.Item.Type;
         if (!Declare(loopScope, new VariableSymbol(expr.Item.Name, itemType, expr.Item.Span), expr.Item))
@@ -680,6 +683,100 @@ public class BodyResolver : AeroThrower
 
         return cType;
     }
+    private int _iterators;
+
+    // for (x in c) { body } over a type that is, or implements, the trait marked @Lang("Iterable") becomes
+    // val <iter> = c.Iterator(); while (<iter>.HasNext) { val x = <iter>.Next; body }, so calls and properties resolve like written code
+    private AeroType ResolveIterableFor(ForExpressionNode expr, AeroType collection, TypeScope scope, BodyScope bScope)
+    {
+        var iterable = FindLangItem("Iterable") as TraitSymbol;
+        if (iterable is null)
+            return Fail($"Cannot iterate over '{collection}', iterating needs a trait marked @Lang(\"Iterable\")", expr.Collection.Span);
+
+        var item = IterableItemOf(collection, iterable, scope, expr.Span.FilePath, []);
+        if (item is null) return Fail($"Cannot iterate over '{collection}', it does not implement '{iterable.Name}'", expr.Collection.Span);
+
+        var span = expr.Span;
+        var iterator = $"<iter{_iterators++}>";
+
+        ExpressionNode Name(string name) => new IdentifierExpressionNode(name, span);
+        ExpressionNode Member(string target, string member) => new MemberAccessExpressionNode(Name(target), Name(member), span);
+
+        var iteratorCall = new CallExpressionNode(new MemberAccessExpressionNode(expr.Collection, Name("Iterator"), span), ValueList<ExpressionNode>.Empty, span);
+        var iteratorDecl = new VariableStatementNode(VariableKind.Val, AeroType.Auto, iterator, iteratorCall, span);
+
+        var itemDecl = new VariableStatementNode(VariableKind.Val, expr.Item.Type, expr.Item.Name, Member(iterator, "Next"), expr.Item.Span);
+        var body = new BlockExpressionNode(false, new[] { (StatementNode)itemDecl }.Concat(expr.Body.Statements).ToValueList(), expr.Body.Span);
+        var loop = new WhileStatementNode(Member(iterator, "HasNext"), body, span);
+
+        var statements = new StatementNode[] { iteratorDecl, loop }.ToValueList();
+        Typed.Desugared[expr] = statements;
+
+        CheckStatements(statements, scope, bScope);
+        if (Typed.BindingOf(itemDecl) is { } itemBinding) Typed.Bindings[expr.Item] = itemBinding;
+
+        return collection;
+    }
+
+    // The item type when 'type' is the iterable trait itself or lists it, through base types and traits, resolving each listed name where it was written
+    private AeroType? IterableItemOf(AeroType type, TraitSymbol iterable, TypeScope scope, string file, HashSet<TypeSymbol> seen)
+    {
+        var symbol = FindType(type, scope, file);
+        if (symbol is null || !seen.Add(symbol)) return null;
+
+        if (symbol == iterable)
+            return type is GenericType { TypeArguments.Count: 1 } g ? ArgToType(g.TypeArguments[0]) : null;
+
+        var map = TypeArgMap(symbol, type);
+        foreach (var listed in ListedTypesOf(symbol))
+            if (IterableItemOf(Subst(listed, map), iterable, symbol.Scope, symbol.Span.FilePath, seen) is { } item) return item;
+
+        return null;
+    }
+
+    private static IEnumerable<AeroType> ListedTypesOf(TypeSymbol symbol) => symbol switch
+    {
+        ClassSymbol c  => c.Node.Implements,
+        StructSymbol s => s.Node.Implements,
+        RecordSymbol r => r.Node.Implements,
+        TraitSymbol t  => t.Node.Traits,
+        _ => []
+    };
+
+    private readonly Dictionary<string, TypeSymbol?> _langItems = new();
+
+    // The type declared with @Lang("name"), in the project or any library; this is how the language finds the std types it relies on
+    private TypeSymbol? FindLangItem(string name)
+    {
+        if (_langItems.TryGetValue(name, out var cached)) return cached;
+
+        TypeSymbol? found = null;
+        foreach (var module in Table.Modules.Values)
+        {
+            foreach (var symbol in module.Scope.Types.Values.SelectMany(l => l))
+            {
+                var annotations = symbol switch
+                {
+                    ClassSymbol c  => c.Node.Annotations,
+                    StructSymbol s => s.Node.Annotations,
+                    RecordSymbol r => r.Node.Annotations,
+                    TraitSymbol t  => t.Node.Annotations,
+                    _ => ValueList<AnnotationStatementNode>.Empty
+                };
+
+                if (annotations.Any(a => a.Name == "Lang" && a.Parameters.Count == 1
+                        && a.Parameters[0] is LiteralExpressionNode { LiteralType: TokenType.StringLiteral, Value: string value } && value == name))
+                {
+                    found = symbol;
+                    break;
+                }
+            }
+            if (found is not null) break;
+        }
+
+        return _langItems[name] = found;
+    }
+
     private AeroType ElementTypeOf(AeroType collection, SourceSpan span) => collection switch
     {
         _ when collection == AeroType.Error => AeroType.Error,

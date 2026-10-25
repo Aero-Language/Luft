@@ -37,6 +37,9 @@ public sealed class TypedInfo
     public Dictionary<AstNode, AeroType> Types { get; } = new(ReferenceEqualityComparer.Instance);
     public Dictionary<AstNode, Binding> Bindings { get; } = new(ReferenceEqualityComparer.Instance);
 
+    // A 'for' over an iterable type is rewritten into these statements, which the code generator lowers in its place
+    public Dictionary<AstNode, ValueList<StatementNode>> Desugared { get; } = new(ReferenceEqualityComparer.Instance);
+
     // The variables of the enclosing function a lambda uses, in order of first use; a closure copies them
     public Dictionary<AstNode, List<VariableSymbol>> Captures { get; } = new(ReferenceEqualityComparer.Instance);
 

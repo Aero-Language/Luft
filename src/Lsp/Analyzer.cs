@@ -20,7 +20,7 @@ public sealed class Analyzer(Snapshot snap)
     enum Place { Top, TypeBody, Statement, Property, Enum }
 
     static readonly HashSet<string> AccessMods = ["public", "internal", "protected", "private"];
-    static readonly HashSet<string> MemberMods = ["static", "weak", "partial", "unsafe"];
+    static readonly HashSet<string> MemberMods = ["static", "weak", "partial", "unsafe", "extern"];
     static readonly HashSet<string> InheritMods = ["virtual", "abstract", "sealed", "impl"];
 
     static readonly string[] DeclKeywords =

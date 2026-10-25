@@ -22,6 +22,16 @@ public sealed class FunctionSymbol(string name, AccessMod access, ModuleSymbol m
     public BlockExpressionNode? Body => Declaration.Body;
 
     public AeroType? ExtensionTarget { get; init; } // set only for `extension fun Target.Name(...)`
+
+    public bool IsExtern => MemberMods.HasFlag(MemberMod.Extern);
+
+    // The @Library("library", "symbol") of a native function, null for any other
+    public AnnotationStatementNode? LibraryAnnotation => IsExtern ? Declaration.Annotations.FirstOrDefault(a => a.Name == "Library") : null;
+    public string? NativeLibrary => LibraryArgument(0);
+    public string? NativeSymbol => LibraryArgument(1) ?? (LibraryAnnotation is null ? null : Name);
+
+    private string? LibraryArgument(int index)
+        => LibraryAnnotation is { } library && index < library.Parameters.Count && library.Parameters[index] is LiteralExpressionNode { Value: string text } ? text : null;
     
     
     public SymbolSignature Signature => new(Name, GenericParameters, Parameters);

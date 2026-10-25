@@ -1625,6 +1625,7 @@ public sealed class AstBuilder : SafeIterator<Token>
                 "weak" => MemberMod.Weak,
                 "partial" => MemberMod.Partial,
                 "unsafe" => MemberMod.Unsafe,
+                "extern" => MemberMod.Extern,
                 _ => MemberMod.None
             };
         }

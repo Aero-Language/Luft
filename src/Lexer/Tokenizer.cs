@@ -501,7 +501,7 @@ public sealed class Tokenizer : SafeIterator<char>
         // Variable & Access Modifiers
         "val" or "var" or "const" => TokenType.VariableKind,
         "public" or "internal" or "protected" or "private" => TokenType.AccessModifierKind,
-        "static" or "weak" or "partial" or "unsafe" => TokenType.MemberModifierKind,
+        "static" or "weak" or "partial" or "unsafe" or "extern" => TokenType.MemberModifierKind,
         "virtual" or "abstract" or "sealed" or "impl" =>  TokenType.InheritanceModifierKind,
         "struct" or "record" or "class" or "fun" or "enum" or "trait" or "extension" or "extensions" or "annotation" or "constructor" or "destructor" or "op" => TokenType.InstanceKind,
 

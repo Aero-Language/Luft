@@ -283,6 +283,8 @@ public class BodyResolver : AeroThrower
     {
         foreach (var property in properties)
         {
+            CheckExternProperty(property);
+
             // 'it' is the property's implicit backing value inside its accessors
             var previousIt = CurrentItType;
             CurrentItType = property.Type;
@@ -334,10 +336,61 @@ public class BodyResolver : AeroThrower
         Declare(scope, new VariableSymbol("value", propertyType, span), setter);
         return scope;
     }
+    private static readonly HashSet<string> NativeTypes = ["Int", "Long", "Float", "Double", "Bool", "Byte", "Char", "String", "Void"];
+
+    // 'extern' declares a function or property the language or a native library provides. With @Library("library", "symbol") the function is
+    // a native one and its types are mapped to C types, without it the declaration only names something the compiler implements itself.
+    private void CheckExtern(FunctionSymbol function)
+    {
+        var declaration = function.Declaration;
+        var library = declaration.Annotations.FirstOrDefault(a => a.Name == "Library");
+        var isExtern = function.MemberMods.HasFlag(MemberMod.Extern);
+
+        if (library is not null && !isExtern)
+        {
+            Error("'@Library' only applies to 'extern' declarations", library.Span);
+            return;
+        }
+        if (!isExtern) return;
+
+        if (function.Body is not null) Error($"The 'extern' function '{function.Name}' cannot have a body", function.Span);
+        if (function.InheritanceMod != InheritanceMod.None)
+            Error($"The 'extern' function '{function.Name}' cannot be virtual, abstract, sealed or an implementation", function.Span);
+        if (library is null) return;
+
+        if (library.Parameters.Count is < 1 or > 2 || library.Parameters.Any(a => a is not LiteralExpressionNode { LiteralType: TokenType.StringLiteral }))
+            Error("'@Library' takes the library name and optionally the name of the native function, both as strings", library.Span);
+        if (!function.MemberMods.HasFlag(MemberMod.Static))
+            Error($"The native function '{function.Name}' must be static, native code has no 'self'", function.Span);
+        if (function.GenericParameters.Count > 0)
+            Error($"The native function '{function.Name}' cannot be generic", function.Span);
+
+        foreach (var parameter in function.Declaration.Parameters) CheckNativeType(parameter.Type, parameter.Span);
+        CheckNativeType(function.ReturnType, function.Span);
+    }
+
+    private void CheckNativeType(AeroType type, SourceSpan span)
+    {
+        if (type is ScalarType { IsNullable: false, IsRef: false } scalar && NativeTypes.Contains(scalar.Name)) return;
+        Error($"'{type}' cannot be passed to native code, only Int, Long, Float, Double, Bool, Byte, Char and String can", span);
+    }
+
+    private void CheckExternProperty(PropertySymbol property)
+    {
+        var declaration = property.Declaration;
+        var library = declaration.Annotations.FirstOrDefault(a => a.Name == "Library");
+        var isExtern = declaration.MemberMods.HasFlag(MemberMod.Extern);
+
+        if (library is not null) Error(isExtern ? "'@Library' is not supported on properties yet" : "'@Library' only applies to 'extern' declarations", library.Span);
+        if (isExtern && (property.Getter?.Body is not null || property.Setter?.Body is not null))
+            Error($"The 'extern' property '{property.Name}' cannot have accessor bodies", property.Span);
+    }
+
     private void CheckFunctions(List<FunctionSymbol> functions, TypeScope scope)
     {
         foreach (var function in functions)
         {
+            CheckExtern(function);
             ResolveDefaults(function.Declaration.Parameters, scope);
             
             if (function.Body is not null)

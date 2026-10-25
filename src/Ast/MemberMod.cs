@@ -7,7 +7,8 @@ public enum MemberMod
     Static = 1,
     Weak = 2,
     Partial = 4,
-    Unsafe = 8
+    Unsafe = 8,
+    Extern = 16
 }
 
 public static class MemberModExtensions
@@ -21,6 +22,7 @@ public static class MemberModExtensions
         if (mod.HasFlag(MemberMod.Weak))    mods.Add("weak");
         if (mod.HasFlag(MemberMod.Partial)) mods.Add("partial");
         if (mod.HasFlag(MemberMod.Unsafe))  mods.Add("unsafe");
+        if (mod.HasFlag(MemberMod.Extern))  mods.Add("extern");
         
         return string.Join(" ", mods);
     }

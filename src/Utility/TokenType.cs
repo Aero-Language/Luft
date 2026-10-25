@@ -26,7 +26,7 @@ public enum TokenType
     // Grouped keywords
     VariableKind,            // val, var, const
     AccessModifierKind,      // public, internal, protected, private
-    MemberModifierKind,      // static, weak, partial, unsafe
+    MemberModifierKind,      // static, weak, partial, unsafe, extern
     InheritanceModifierKind, // virtual, abstract, sealed, impl
     InstanceKind,            // struct, record, class, enum, trait, extension(s), annotation, fun
     

@@ -47,6 +47,11 @@ public sealed class CodeGenerator : AeroThrower, IDisposable
     public IReadOnlyList<string> LibraryInits { get; init; } = [];
     private readonly string _moduleName;
 
+    // The native libraries the module's @Library functions come from, to be linked in
+    public HashSet<string> NativeLibraries { get; } = [];
+
+    private readonly List<(FunctionSymbol Function, DeclaredFunction Declared)> _externs = [];
+
     // True when the module calls into the C runtime, which then has to be linked in
     public bool UsesRuntime
     {
@@ -82,6 +87,7 @@ public sealed class CodeGenerator : AeroThrower, IDisposable
 
         DeclareVTables();
         EmitDispatchThunks();
+        EmitExternWrappers();
         DeclareTraitVTables();
 
         var failed = !EmitAll();
@@ -378,6 +384,9 @@ public sealed class CodeGenerator : AeroThrower, IDisposable
     {
         foreach (var f in scope.Functions.Values.SelectMany(l => l))
         {
+            // Without @Library the declaration only names something the compiler provides itself
+            if (f.IsExtern && f.LibraryAnnotation is null) continue;
+
             var hasSelf = owner is not null && !f.MemberMods.HasFlag(MemberMod.Static);
             if (f.GenericParameters.Count > 0)
             {
@@ -410,6 +419,9 @@ public sealed class CodeGenerator : AeroThrower, IDisposable
 
             var declared = new DeclaredFunction(value, type.Value, scope, owner, hasSelf);
             _functions[f] = declared;
+
+            // A library's header only lists the wrapper, its body is inside the library
+            if (f.IsExtern && _declaringModule is not { IsLibrary: true }) _externs.Add((f, declared));
 
             if (!(external && IsLibrary)) continue;
 
@@ -569,6 +581,92 @@ public sealed class CodeGenerator : AeroThrower, IDisposable
             b.PositionAtEnd(_context.AppendBasicBlock(function, "entry"));
             b.BuildRet(b.BuildIntCast(value, _context.Int64Type, "query"));
         }
+    }
+
+    // The function of an @Library declaration has the Aero signature and wraps the native one: the builtin types are mapped to their C types,
+    // a String becomes a null terminated UTF-8 copy for the call and the String a native function returns is copied
+    private void EmitExternWrappers()
+    {
+        foreach (var (function, declared) in _externs)
+        {
+            if (function.NativeLibrary is not { } library || function.NativeSymbol is not { } symbol) continue;
+
+            var parameters = function.Parameters;
+            var nativeParameters = new List<LLVMTypeRef>();
+            var valid = true;
+            foreach (var parameter in parameters)
+            {
+                if (NativeTypeOf(parameter.Type, function.Span) is { } nativeType) nativeParameters.Add(nativeType);
+                else valid = false;
+            }
+            if (NativeTypeOf(function.ReturnType, function.Span) is not { } nativeReturn || !valid) continue;
+
+            NativeLibraries.Add(library);
+
+            using var b = _context.CreateBuilder();
+            b.PositionAtEnd(_context.AppendBasicBlock(declared.Value, "entry"));
+
+            var arguments = new List<LLVMValueRef>();
+            var copies = new List<LLVMValueRef>();
+            for (var i = 0; i < parameters.Count; i++)
+            {
+                var value = declared.Value.GetParam((uint)i);
+                if (parameters[i].Type.Name != AeroType.String.Name)
+                {
+                    arguments.Add(value);
+                    continue;
+                }
+
+                var slot = b.BuildAlloca(_types.StringStruct, "str");
+                b.BuildStore(value, slot);
+                var copy = CallRuntime(b, "aero_str_to_c", _types.Ptr, slot);
+                arguments.Add(copy);
+                copies.Add(copy);
+            }
+
+            var nativeFunctionType = LLVMTypeRef.CreateFunction(nativeReturn, nativeParameters.ToArray());
+            var native = Module.GetNamedFunction(symbol);
+            if (native.Handle == IntPtr.Zero) native = Module.AddFunction(symbol, nativeFunctionType);
+
+            var isVoid = nativeReturn.Kind == LLVMTypeKind.LLVMVoidTypeKind;
+            var result = b.BuildCall2(nativeFunctionType, native, arguments.ToArray(), isVoid ? "" : "native");
+            foreach (var copy in copies) CallRuntime(b, "aero_c_free", _context.VoidType, copy);
+
+            if (isVoid) b.BuildRetVoid();
+            else if (function.ReturnType.Name == AeroType.String.Name)
+            {
+                var slot = b.BuildAlloca(_types.StringStruct, "str");
+                CallRuntime(b, "aero_str_from_c", _context.VoidType, slot, result);
+                b.BuildRet(b.BuildLoad2(_types.StringStruct, slot, "text"));
+            }
+            else b.BuildRet(result);
+        }
+    }
+
+    private LLVMTypeRef? NativeTypeOf(AeroType type, SourceSpan span)
+    {
+        if (type.Name == AeroType.Int.Name) return _context.Int32Type;
+        if (type.Name == AeroType.Long.Name) return _context.Int64Type;
+        if (type.Name == AeroType.Float.Name) return _context.FloatType;
+        if (type.Name == AeroType.Double.Name) return _context.DoubleType;
+        if (type.Name == AeroType.Bool.Name || type.Name == AeroType.Byte.Name) return _context.Int8Type;
+        if (type.Name == AeroType.Char.Name) return _context.Int16Type;
+        if (type.Name == AeroType.String.Name) return _types.Ptr;
+        if (type.Name == AeroType.Void.Name) return _context.VoidType;
+
+        Error($"'{type}' cannot be passed to native code.", span);
+        return null;
+    }
+
+    private LLVMValueRef CallRuntime(LLVMBuilderRef b, string name, LLVMTypeRef returnType, params LLVMValueRef[] arguments)
+    {
+        var type = LLVMTypeRef.CreateFunction(returnType, arguments.Select(a => a.TypeOf).ToArray());
+
+        var function = Module.GetNamedFunction(name);
+        if (function.Handle == IntPtr.Zero) function = Module.AddFunction(name, type);
+
+        var isVoid = returnType.Kind == LLVMTypeKind.LLVMVoidTypeKind;
+        return b.BuildCall2(type, function, arguments, isVoid ? "" : "rt");
     }
 
     // The thunks have no body of their own: they load the function from the object's vtable and call it

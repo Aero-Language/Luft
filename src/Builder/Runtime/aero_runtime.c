@@ -170,3 +170,59 @@ void aero_args(AeroArray *out, int32_t argc, char **argv)
     out->data = items;
     out->length = count;
 }
+
+// Strings cross into native code as null terminated UTF-8, the copy is released with aero_c_free
+char *aero_str_to_c(const AeroString *s)
+{
+    char *text = malloc((size_t)s->length * 3 + 1);
+    size_t n = 0;
+
+    for (int32_t i = 0; i < s->length; i++)
+    {
+        uint32_t cp = ((const uint16_t *)s->data)[i];
+        if (cp >= 0xD800 && cp < 0xDC00 && i + 1 < s->length)
+        {
+            uint32_t low = ((const uint16_t *)s->data)[i + 1];
+            if (low >= 0xDC00 && low < 0xE000)
+            {
+                cp = 0x10000 + ((cp - 0xD800) << 10) + (low - 0xDC00);
+                i++;
+            }
+        }
+
+        if (cp < 0x80) text[n++] = (char)cp;
+        else if (cp < 0x800)
+        {
+            text[n++] = (char)(0xC0 | (cp >> 6));
+            text[n++] = (char)(0x80 | (cp & 0x3F));
+        }
+        else if (cp < 0x10000)
+        {
+            text[n++] = (char)(0xE0 | (cp >> 12));
+            text[n++] = (char)(0x80 | ((cp >> 6) & 0x3F));
+            text[n++] = (char)(0x80 | (cp & 0x3F));
+        }
+        else
+        {
+            text[n++] = (char)(0xF0 | (cp >> 18));
+            text[n++] = (char)(0x80 | ((cp >> 12) & 0x3F));
+            text[n++] = (char)(0x80 | ((cp >> 6) & 0x3F));
+            text[n++] = (char)(0x80 | (cp & 0x3F));
+        }
+    }
+
+    text[n] = '\0';
+    return text;
+}
+
+void aero_c_free(void *memory)
+{
+    free(memory);
+}
+
+// A String a native function returned is copied, the native side keeps owning its text
+void aero_str_from_c(AeroString *out, const char *text)
+{
+    if (text == NULL) from_ascii(out, "", 0);
+    else from_utf8(out, text);
+}

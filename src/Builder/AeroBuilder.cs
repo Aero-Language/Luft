@@ -205,6 +205,10 @@ public class AeroBuilder : AeroThrower
         }
     }
 
+    // A bare name is searched by the linker (-lm), a path or a file name with an extension is passed as it is
+    private static string NativeInput(string library)
+        => library.Contains('/') || library.Contains('\\') || Path.HasExtension(library) ? library : "-l" + library;
+
     private string? EmitAndLink(TypeTable table, AeroBuilderSettings settings, string outputPath, bool isLibrary, IReadOnlyList<LoadedLibrary> packages)
     {
         using var generator = new CodeGenerator(Path.GetFileNameWithoutExtension(outputPath), table)
@@ -244,6 +248,9 @@ public class AeroBuilder : AeroThrower
                 }
                 extra.Add(runtime);
             }
+
+            // The native libraries of @Library functions; a library package records them in its binary, so only the one building it links them
+            foreach (var native in generator.NativeLibraries) extra.Add(NativeInput(native));
 
             // The runtime's symbols stay inside a library, so two libraries never clash
             var flags = new List<string>();

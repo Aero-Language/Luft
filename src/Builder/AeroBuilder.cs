@@ -205,9 +205,20 @@ public class AeroBuilder : AeroThrower
         }
     }
 
-    // A bare name is searched by the linker (-lm), a path or a file name with an extension is passed as it is
+    // A bare name is searched by the linker (-lm), a path is passed as it is
+    // "libc" and "libc.so" both become -lc, since the linker adds the lib prefix itself
     private static string NativeInput(string library)
-        => library.Contains('/') || library.Contains('\\') || Path.HasExtension(library) ? library : "-l" + library;
+    {
+        if (library.Contains('/') || library.Contains('\\')) return library;
+
+        var name = library;
+        var ext = Path.GetExtension(name);
+        if (ext is ".so" or ".a" or ".dylib" or ".dll" or ".lib") name = Path.GetFileNameWithoutExtension(name);
+        else if (ext.Length > 0) return library;
+
+        if (name.Length > 3 && name.StartsWith("lib", StringComparison.Ordinal)) name = name[3..];
+        return "-l" + name;
+    }
 
     private string? EmitAndLink(TypeTable table, AeroBuilderSettings settings, string outputPath, bool isLibrary, IReadOnlyList<LoadedLibrary> packages)
     {
